@@ -1,0 +1,33 @@
+name: Miri
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 0"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  miri:
+    name: Miri (nightly)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust nightly with Miri
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          components: miri
+          override: true
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Miri
+        run: |
+          cargo miri setup
+          cargo miri test

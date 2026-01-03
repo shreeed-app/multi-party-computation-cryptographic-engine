@@ -1,0 +1,69 @@
+[tasks.check]
+description = "Perform a cargo check."
+command = "cargo"
+args = ["check"]
+
+[tasks.test]
+description = "Run tests with all features."
+command = "cargo"
+args = ["test", "--all-features"]
+
+[tasks.fmt]
+description = "Check code formatting."
+command = "cargo"
+args = ["fmt", "--all", "--", "--check"]
+
+[tasks.lint]
+description = "Run Clippy linter."
+command = "cargo"
+args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
+
+[tasks.build]
+description = "Build the project in release mode."
+command = "cargo"
+args = ["build", "--release"]
+
+[tasks.deny]
+description = "Run cargo-deny to check for license and security issues."
+command = "cargo"
+args = ["deny", "check"]
+
+[tasks.audit]
+description = "Run cargo-audit to check for vulnerabilities."
+command = "cargo"
+args = ["audit"]
+
+[tasks.dev]
+description = "Local developer checks."
+dependencies = ["fmt", "check", "test"]
+
+[tasks.bench]
+description = "Run benchmarks with all features."
+command = "cargo"
+args = ["bench", "--all-features"]
+
+[tasks.ci]
+description = "Full CI pipeline."
+dependencies = ["fmt", "check", "lint", "test", "deny", "audit"]
+
+[tasks.cd]
+description = "Continuous Deployment tasks."
+dependencies = ["build"]
+
+[tasks.miri]
+description = "Run Miri."
+command = "cargo"
+args = ["miri", "test"]
+toolchain = "nightly"
+
+[tasks.act]
+description = "Run GitHub Actions locally on Ubuntu using act."
+command = "act"
+args = [
+    "-W",
+    ".github/workflows/ci.yaml",
+    "-P",
+    "ubuntu-latest=ghcr.io/catthehacker/ubuntu:full-latest",
+    "--container-architecture",
+    "linux/amd64",
+]

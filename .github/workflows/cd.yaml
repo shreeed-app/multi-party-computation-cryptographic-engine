@@ -1,12 +1,15 @@
 name: Continuous deployment
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows:
+      - "Continuous integration"
+    types:
+      - completed
 
 jobs:
   cd:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     name: Release on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
 

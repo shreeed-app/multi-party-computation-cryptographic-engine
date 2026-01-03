@@ -1,0 +1,11 @@
+{
+    "recommendations": [
+        "vadimcn.vscode-lldb",
+        "fill-labs.dependi",
+        "tamasfe.even-better-toml",
+        "DrBlury.protobuf-vsc",
+        "dustypomerleau.rust-syntax",
+        "rust-lang.rust-analyzer",
+        "redhat.vscode-yaml"
+    ]
+}

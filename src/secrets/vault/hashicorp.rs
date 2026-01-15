@@ -45,9 +45,9 @@ impl HashicorpVaultProvider {
             None => match EnvConfig::load() {
                 Ok(config) => match &config.vault_token {
                     Some(token) => token.clone(),
-                    None => return Err(Error::VaultConfigError),
+                    None => return Err(Error::VaultTokenMissing),
                 },
-                Err(_) => return Err(Error::VaultConfigError),
+                Err(_) => return Err(Error::VaultTokenMissing),
             },
         };
 
@@ -64,7 +64,7 @@ impl HashicorpVaultProvider {
 
         let client: VaultClient = match VaultClient::new(settings) {
             Ok(client) => client,
-            Err(_) => return Err(Error::VaultConfigError),
+            Err(_) => return Err(Error::VaultError),
         };
 
         Ok(Self {

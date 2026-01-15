@@ -39,7 +39,9 @@ impl From<Error> for Status {
             Error::Internal(_)
             | Error::FailedToSign
             | Error::InvalidSignature
+            | Error::VaultTokenMissing
             | Error::VaultConfigError
+            | Error::VaultError
             | Error::LiveLockAcquireError
             | Error::ConfigError(_) => Code::Internal,
         };

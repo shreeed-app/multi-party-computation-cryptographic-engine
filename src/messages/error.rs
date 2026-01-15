@@ -74,9 +74,17 @@ pub enum Error {
     #[error("Threshold not satisfied: {0}")]
     ThresholdNotMet(String),
 
+    /// Vault token missing: no token provided for vault access.
+    #[error("Vault token missing.")]
+    VaultTokenMissing,
+
     /// Vault configuration error: invalid vault configuration.
     #[error("Vault configuration error.")]
     VaultConfigError,
+
+    /// Vault error: error occurred while interacting with the vault.
+    #[error("Vault error.")]
+    VaultError,
 
     /// Key not found: the requested key does not exist in the vault.
     #[error("Key not found in vault.")]

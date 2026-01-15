@@ -8,9 +8,12 @@ use serde::Deserialize;
 pub struct IpcConfig {
     /// Logical node identifier (used for scoping).
     pub node_id: String,
-
     /// Authentication configuration.
     pub auth: AuthConfig,
+    /// IPC server address (e.g. "[::1]:50051").
+    pub address: String,
+    /// Session TTL in seconds.
+    pub ttl_seconds: u64,
 }
 
 /// IPC authentication configuration.

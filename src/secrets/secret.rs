@@ -3,7 +3,8 @@
 use zeroize::Zeroize;
 
 /// `Secret<T>` ensures, the value is zeroized on drop, is not accidentally
-/// cloned, and access is always explicit
+/// cloned, and access is always explicitly controlled.
+#[derive(Debug)]
 pub struct Secret<T: Zeroize> {
     inner: T,
 }

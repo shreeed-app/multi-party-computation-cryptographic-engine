@@ -1,7 +1,10 @@
 //! Mock engine for testing purposes.
 use mpc_signer_engine::auth::session::identifier::SessionId;
-use mpc_signer_engine::engine::EngineApi;
+use mpc_signer_engine::engine::api::EngineApi;
 use mpc_signer_engine::messages::error::Error;
+use mpc_signer_engine::protocols::types::{
+    ProtocolInit, RoundMessage, Signature,
+};
 
 /// Minimal engine mock for IPC tests.
 #[derive(Clone)]
@@ -10,29 +13,24 @@ pub struct MockEngine;
 impl EngineApi for MockEngine {
     fn start_session(
         &self,
-        _key_id: &str,
-        _algorithm: &str,
-        _threshold: u32,
-        _participants: u32,
-        _message: &[u8],
-    ) -> Result<SessionId, Error> {
-        Ok(SessionId::new())
+        _init: ProtocolInit,
+    ) -> Result<(SessionId, RoundMessage), Error> {
+        Ok((SessionId::new(), RoundMessage { round: 0, payload: vec![] }))
     }
 
     fn submit_round(
         &self,
-        _session_id: &str,
-        _round: u32,
-        _payload: &[u8],
-    ) -> Result<(Vec<u8>, bool), Error> {
-        Ok((vec![], false))
+        _session_id: SessionId,
+        _message: RoundMessage,
+    ) -> Result<RoundMessage, Error> {
+        Ok(RoundMessage { round: 0, payload: vec![] })
     }
 
-    fn finalize_session(&self, _session_id: &str) -> Result<Vec<u8>, Error> {
-        Ok(vec![0xde, 0xad, 0xbe, 0xef])
+    fn finalize(&self, _session_id: SessionId) -> Result<Signature, Error> {
+        Ok(Signature { bytes: vec![] })
     }
 
-    fn abort_session(&self, _session_id: &str) -> Result<(), Error> {
+    fn abort(&self, _session_id: SessionId) -> Result<(), Error> {
         Ok(())
     }
 }

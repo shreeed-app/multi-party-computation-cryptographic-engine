@@ -17,6 +17,9 @@ pub fn expires_sessions_after_ttl() {
 
     sleep(Duration::from_millis(20));
 
-    let error: Error = store.with_session(id, |_| Ok(())).unwrap_err();
-    assert_eq!(error, Error::SessionNotFound);
+    let error: Error = match store.with_session(id, |_| Ok(())) {
+        Ok(_) => panic!("Expected session to be expired."),
+        Err(error) => error,
+    };
+    assert_eq!(error, Error::SessionNotFound(id.to_string()));
 }

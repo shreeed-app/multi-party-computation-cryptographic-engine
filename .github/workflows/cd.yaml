@@ -79,5 +79,5 @@ jobs:
       - name: Release
         uses: actions/upload-artifact@v4
         with:
-          name: mpc-signer-engine
+          name: mpc-signer-engine-${{ matrix.os }}
           path: target/release/

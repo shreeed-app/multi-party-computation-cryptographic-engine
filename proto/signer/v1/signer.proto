@@ -5,66 +5,68 @@ package signer.v1;
 option go_package = "signer_pb";
 option java_package = "com.signer.v1";
 
-/// Service for managing multi-party computation (MPC) signing sessions.
-/// It provides methods to start, submit data for, finalize, and abort 
-/// signing sessions.
-service MpcSigner {
-  // Start a new signing session.
+/// Signing engine IPC service.
+service Signer {
+  /// Start a new signing session and execute round 0.
   rpc StartSession (StartSessionRequest)
-      returns (StartSessionResponse);
+  returns (StartSessionResponse);
 
-  // Submit data for a given signing round.
+  /// Submit a round message and receive the next round output.
   rpc SubmitRound (SubmitRoundRequest)
-      returns (SubmitRoundResponse);
+  returns (SubmitRoundResponse);
 
-  // Finalize the session and return the signature.
+  /// Finalize the session and return the signature.
   rpc FinalizeSession (FinalizeSessionRequest)
-      returns (FinalizeSessionResponse);
+  returns (FinalizeSessionResponse);
 
-  // Abort a session explicitly.
+  /// Abort a session explicitly.
   rpc AbortSession (AbortSessionRequest)
-      returns (AbortSessionResponse);
+  returns (AbortSessionResponse);
 }
 
 /// Request to start a new signing session.
 message StartSessionRequest {
   /// Identifier of the key share.
   string key_id = 1;
-  /// Algorithm (e.g., "secp256k1", "ed25519").
+  /// Algorithm identifier (e.g. "frost-ed25519").
   string algorithm = 2;
-  /// Number of required signers t.
+  /// Threshold (t).
   uint32 threshold = 3;
-  /// // Number of participants n.
+  /// Number of participants (n).
   uint32 participants = 4;
-  /// Message to sign (pre-hash or raw).
+  /// Message to sign.
   bytes message = 5;
 }
 
-/// Response containing the session ID.
+/// Response containing the session ID and round 0 output.
 message StartSessionResponse {
   /// Unique session identifier.
   string session_id = 1;
-}
-
-/// Request to submit data for a signing round.
-message SubmitRoundRequest {
-  /// Unique session identifier.
-  string session_id = 1;
-  /// Round number.
+  /// Round number (always 0).
   uint32 round = 2;
-  /// Opaque MPC data for this round.
+  /// Opaque round payload.
   bytes payload = 3;
 }
 
-/// Response containing data for the next round or final signature.
-message SubmitRoundResponse {
-  /// Opaque MPC response.
-  bytes payload = 1;
-  /// Whether this round completes the protocol.
-  bool is_final = 2;
+/// Request to submit a round message.
+message SubmitRoundRequest {
+  /// Unique session identifier.
+  string session_id = 1;
+  /// Round number being submitted.
+  uint32 round = 2;
+  /// Opaque payload.
+  bytes payload = 3;
 }
 
-/// Request to finalize the signing session.
+/// Response containing the next round message.
+message SubmitRoundResponse {
+  /// Next round number.
+  uint32 round = 1;
+  /// Opaque payload.
+  bytes payload = 2;
+}
+
+/// Request to finalize a signing session.
 message FinalizeSessionRequest {
   /// Unique session identifier.
   string session_id = 1;
@@ -76,13 +78,11 @@ message FinalizeSessionResponse {
   bytes signature = 1;
 }
 
-/// Request to abort an ongoing signing session.
+/// Request to abort a signing session.
 message AbortSessionRequest {
   /// Unique session identifier.
   string session_id = 1;
-  /// Reason for aborting the session.
-  string reason = 2;
 }
 
-/// Response confirming the session has been aborted.
+/// Empty response confirming abort.
 message AbortSessionResponse {}

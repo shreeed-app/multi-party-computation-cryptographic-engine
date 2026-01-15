@@ -1,4 +1,4 @@
-//! Strongly typed MPC session identifier.
+//! Strongly typed session identifier.
 
 use std::fmt;
 

@@ -1,10 +1,11 @@
-//! MPC Signer Engine Library
+//! Library.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::all)]
 #![deny(missing_docs)]
 
 pub mod auth;
+pub mod config;
 pub mod engine;
 pub mod messages;
 pub mod protocols;

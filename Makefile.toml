@@ -18,10 +18,30 @@ description = "Run Clippy linter."
 command = "cargo"
 args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
 
+[tasks.clean]
+description = "Clean the project."
+command = "cargo"
+args = ["clean"]
+
+[tasks.update]
+description = "Update dependencies."
+command = "cargo"
+args = ["update"]
+
+[tasks.upgrade]
+description = "Upgrade dependencies to the latest versions."
+command = "cargo"
+args = ["upgrade"]
+
 [tasks.build]
 description = "Build the project in release mode."
 command = "cargo"
 args = ["build", "--release"]
+
+[tasks.run]
+description = "Run the project."
+command = "cargo"
+args = ["run"]
 
 [tasks.deny]
 description = "Run cargo-deny to check for license and security issues."

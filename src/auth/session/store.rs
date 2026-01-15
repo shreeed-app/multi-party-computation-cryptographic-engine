@@ -1,4 +1,4 @@
-//! In-memory MPC session store.
+//! In-memory session store.
 
 use std::collections::HashMap;
 use std::sync::{RwLock, RwLockWriteGuard};
@@ -11,13 +11,18 @@ use crate::messages::error::Error;
 /// This store is process-local and not persistent.
 /// Sessions are automatically expired after a TTL.
 pub struct SessionStore {
-    sessions: RwLock<HashMap<SessionId, SessionEntry>>,
-    ttl: Duration,
+    /// Mapping of session IDs to session entries.
+    pub sessions: RwLock<HashMap<SessionId, SessionEntry>>,
+    /// Session time-to-live duration.
+    pub ttl: Duration,
 }
 
-struct SessionEntry {
-    state: SessionState,
-    last_updated: Instant,
+/// A session entry held in the store.
+pub struct SessionEntry {
+    /// Current session state.
+    pub state: SessionState,
+    /// Last updated timestamp for TTL enforcement.
+    pub last_updated: Instant,
 }
 
 impl SessionStore {
@@ -73,12 +78,13 @@ impl SessionStore {
         let mut guard: RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>> =
             Self::write_guard(&self.sessions);
 
-        let entry: &mut SessionEntry =
-            guard.get_mut(&id).ok_or(Error::SessionNotFound)?;
+        let entry: &mut SessionEntry = guard
+            .get_mut(&id)
+            .ok_or(Error::SessionNotFound(id.to_string()))?;
 
         if entry.last_updated.elapsed() > self.ttl {
             guard.remove(&id);
-            return Err(Error::SessionNotFound);
+            return Err(Error::SessionNotFound(id.to_string()));
         }
 
         let result: R = f(&mut entry.state)?;
@@ -110,7 +116,7 @@ impl SessionStore {
     ///
     /// # Returns
     /// * `RwLockWriteGuard<'_, T>` - Write guard.
-    fn write_guard<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    pub fn write_guard<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
         match lock.write() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),

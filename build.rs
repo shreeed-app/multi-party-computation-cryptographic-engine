@@ -19,10 +19,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         .to_string_lossy()
         .into_owned();
 
-    configure()
+    match configure()
         .build_server(true)
         .build_client(true)
-        .compile_protos(&[proto_filepath], &[String::from(PROTO_DIRECTORY)])?;
+        .compile_protos(&[proto_filepath], &[String::from(PROTO_DIRECTORY)])
+    {
+        Ok(_) => (),
+        Err(error) => return Err(Box::new(error)),
+    };
 
     Ok(())
 }

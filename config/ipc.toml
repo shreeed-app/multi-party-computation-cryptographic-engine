@@ -1,0 +1,10 @@
+# IPC runtime configuration.
+
+node_id = ""
+address = ""
+ttl_seconds = 0
+
+[auth]
+# Pre-shared token required in gRPC metadata:
+# authorization: <token>
+token = ""

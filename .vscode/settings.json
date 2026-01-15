@@ -17,13 +17,21 @@
         "editor.defaultFormatter": "redhat.vscode-yaml"
     },
     "cSpell.words": [
+        "allocvec",
         "catthehacker",
         "clippy",
+        "dotenv",
+        "dotenvy",
+        "eddsa",
         "miri",
         "prost",
+        "rkyv",
+        "rngs",
         "rustflags",
+        "secp",
         "swatinem",
         "thiserror",
+        "vaultrs",
         "zeroize",
         "zeroized"
     ]

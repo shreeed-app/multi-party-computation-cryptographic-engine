@@ -15,8 +15,11 @@ pub fn enforces_round_order() {
     assert!(state.validate_round(1).is_ok());
 
     state.advance_round(1);
-    assert_eq!(
-        state.validate_round(1).unwrap_err(),
-        Error::InvalidSessionState
-    );
+
+    let error: Error = match state.validate_round(1) {
+        Ok(_) => panic!("Expected error for duplicate round."),
+        Err(error) => error,
+    };
+
+    assert_eq!(error, Error::SessionStateInProgress(2, 1));
 }

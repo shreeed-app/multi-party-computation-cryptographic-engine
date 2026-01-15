@@ -1,4 +1,4 @@
-//! MPC session state machine.
+//! Session state machine.
 
 use crate::messages::error::Error;
 
@@ -40,7 +40,7 @@ impl SessionState {
                 if round == 0 {
                     Ok(())
                 } else {
-                    Err(Error::InvalidSessionState)
+                    Err(Error::SessionStateInitialized(round))
                 }
             }
 
@@ -49,13 +49,16 @@ impl SessionState {
                 if round == *current_round + 1 {
                     Ok(())
                 } else {
-                    Err(Error::InvalidSessionState)
+                    Err(Error::SessionStateInProgress(
+                        current_round + 1,
+                        round,
+                    ))
                 }
             }
 
             // Terminal states: no further rounds are valid.
             SessionState::Finalized | SessionState::Aborted => {
-                Err(Error::InvalidSessionState)
+                Err(Error::SessionStateFinalized)
             }
         }
     }
@@ -85,7 +88,7 @@ impl SessionState {
                 *self = SessionState::Finalized;
                 Ok(())
             }
-            _ => Err(Error::InvalidSessionState),
+            _ => Err(Error::SessionStateNotFinalized),
         }
     }
 

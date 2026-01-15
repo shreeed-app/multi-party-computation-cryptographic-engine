@@ -17,6 +17,6 @@ pub struct DenyAllAuth;
 
 impl AuthProvider for DenyAllAuth {
     fn authenticate<T>(&self, _: &Request<T>) -> Result<(), Error> {
-        Err(Error::Unauthorized)
+        Err(Error::InvalidToken)
     }
 }

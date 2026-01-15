@@ -1,15 +1,12 @@
 //! IPC authentication for gRPC requests.
 
-use tonic::{
-    Request,
-    metadata::{Ascii, MetadataValue},
-};
+use tonic::Request;
+use tonic::metadata::{Ascii, MetadataValue};
 
 use crate::messages::error::Error;
 
-/// IPC authentication provider.
-///
-/// This trait defines how incoming IPC requests are authenticated.
+/// IPC authentication provider. This trait defines how incoming IPC requests
+/// are authenticated.
 pub trait AuthProvider: Send + Sync {
     /// Authenticate an incoming request.
     ///
@@ -19,9 +16,8 @@ pub trait AuthProvider: Send + Sync {
     fn authenticate<T>(&self, request: &Request<T>) -> Result<(), Error>;
 }
 
-/// Token-based IPC authentication.
-///
-/// Intended for local IPC over Unix sockets or mTLS-protected channels.
+/// Token-based IPC authentication. Intended for local IPC over Unix sockets
+/// or mTLS-protected channels.
 pub struct TokenAuth {
     expected_token: String,
 }
@@ -52,13 +48,16 @@ impl AuthProvider for TokenAuth {
     /// # Returns
     /// * `Result<(), AuthError>` - Ok if authenticated, error otherwise.
     fn authenticate<T>(&self, request: &Request<T>) -> Result<(), Error> {
-        let value: &MetadataValue<Ascii> = request
-            .metadata()
-            .get("authorization")
-            .ok_or(Error::MissingAuthorization)?;
+        let value: &MetadataValue<Ascii> =
+            match request.metadata().get("authorization") {
+                Some(value) => value,
+                None => return Err(Error::MissingAuthorization),
+            };
 
-        let token: &str =
-            value.to_str().map_err(|_| Error::InvalidAuthorizationEncoding)?;
+        let token: &str = match value.to_str() {
+            Ok(token) => token,
+            Err(_) => return Err(Error::InvalidAuthorizationEncoding),
+        };
 
         if token != self.expected_token {
             return Err(Error::InvalidToken);

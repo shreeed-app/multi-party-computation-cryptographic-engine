@@ -21,5 +21,6 @@ pub fn expires_sessions_after_ttl() {
         Ok(_) => panic!("Expected session to be expired."),
         Err(error) => error,
     };
+
     assert_eq!(error, Error::SessionNotFound(id.to_string()));
 }

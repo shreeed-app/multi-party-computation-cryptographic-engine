@@ -2,7 +2,8 @@ name: Continuous integration
 
 on:
   push:
-    branches: [master]
+    branches:
+      - master
   pull_request:
 
 env:
@@ -11,48 +12,38 @@ env:
 
 jobs:
   ci:
-    name: Continuous integration on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os:
-          - ubuntu-latest
+    name: Continuous integration (cargo-make)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Restore cache
+      - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Protobuf compiler
-        if: runner.os == 'Linux'
+      - name: Install system dependencies
         run: |
-          if ! command -v protoc >/dev/null 2>&1; then
-            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install cargo-make
+        run: |
+          if ! command -v cargo-make >/dev/null 2>&1; then
+            cargo install cargo-make --locked
           fi
 
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Check
-        run: cargo check
-
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Tests
-        run: cargo test --all-features
-
-      - name: Deny
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-
-      - name: Audit
+      - name: Install cargo-deny
         run: |
-          if ! command -v cargo-audit >/dev/null; then
+          if ! command -v cargo-deny >/dev/null 2>&1; then
+            cargo install cargo-deny --locked
+          fi
+
+      - name: Install cargo-audit
+        run: |
+          if ! command -v cargo-audit >/dev/null 2>&1; then
             cargo install cargo-audit --locked
           fi
-          cargo audit
+
+      - name: Run Continuous integration pipeline (cargo make ci)
+        run: cargo make ci

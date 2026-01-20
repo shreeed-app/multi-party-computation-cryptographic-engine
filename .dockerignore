@@ -1,0 +1,31 @@
+# Rust project
+target
+Makefile.toml
+rustfmt.toml
+**/tests/**
+
+# Version control directories
+.git
+.gitignore
+
+# Github and documentation
+.github
+README*
+LICENSE*
+CODE_OF_CONDUCT*
+CONTRIBUTING*
+COPYING*
+
+# IDE settings
+.idea
+.vscode
+
+# OS generated files
+*.log
+*.swp
+.DS_Store
+Thumbs.db
+
+# Configuration files
+config/*.toml
+.env.example

@@ -1,11 +1,22 @@
 //! Tests for the authentication module.
+use rand::Rng;
+use rand::distr::Alphanumeric;
 use tonic::Request;
 
 use crate::auth::ipc::auth::{AuthProvider, TokenAuth};
 use crate::messages::error::Error;
 
-const EXPECTED_TOKEN: &str = "secret";
-const UNEXPECTED_TOKEN: &str = "not_secret";
+/// Generates a random alphanumeric token of the specified length.
+///
+/// # Arguments
+////// * `len` (`usize`) - The length of the token to generate.
+///
+/// # Returns
+/// `String` - A randomly generated alphanumeric token.
+pub fn random_token(len: usize) -> String {
+    let mut random: rand::prelude::ThreadRng = rand::rng();
+    (&mut random).sample_iter(Alphanumeric).take(len).map(char::from).collect()
+}
 
 /// Tests that the TokenAuth successfully authenticates a request with the
 /// correct token.
@@ -14,12 +25,13 @@ const UNEXPECTED_TOKEN: &str = "not_secret";
 /// Panics if the authentication fails.
 #[test]
 pub fn accepts_valid_token() {
-    let auth: TokenAuth = TokenAuth::new(EXPECTED_TOKEN.into());
+    let expected_token: String = random_token(32);
+    let auth: TokenAuth = TokenAuth::new(expected_token.clone());
 
     let mut request: Request<()> = Request::new(());
-    request
-        .metadata_mut()
-        .insert("authorization", EXPECTED_TOKEN.parse().unwrap());
+    if let Ok(token) = expected_token.parse() {
+        request.metadata_mut().insert("authorization", token);
+    }
 
     assert!(auth.authenticate(&request).is_ok());
 }
@@ -30,11 +42,14 @@ pub fn accepts_valid_token() {
 /// Panics if the authentication does not return an `InvalidToken` error.
 #[test]
 pub fn rejects_invalid_token() {
-    let auth: TokenAuth = TokenAuth::new(EXPECTED_TOKEN.into());
+    let expected_token: String = random_token(32);
+    let unexpected_token: String = random_token(32);
+    let auth: TokenAuth = TokenAuth::new(expected_token);
 
     let mut request: Request<()> = Request::new(());
-    request
-        .metadata_mut()
-        .insert("authorization", UNEXPECTED_TOKEN.parse().unwrap());
+    if let Ok(token) = unexpected_token.parse() {
+        request.metadata_mut().insert("authorization", token);
+    }
+
     assert_eq!(auth.authenticate(&request).unwrap_err(), Error::InvalidToken);
 }

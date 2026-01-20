@@ -38,6 +38,42 @@ description = "Build the project in release mode."
 command = "cargo"
 args = ["build", "--release"]
 
+[tasks.build-musl]
+description = "Build Linux MUSL binary using Docker."
+command = "docker"
+args = [
+    "run",
+    "--rm",
+    "--platform=linux/amd64",
+    "-v",
+    "${CARGO_MAKE_WORKING_DIRECTORY}:/app",
+    "-w",
+    "/app",
+    "rust:1-alpine",
+    "sh",
+    "-c",
+    "apk add --no-cache musl-dev protobuf && cargo build --release",
+]
+
+[tasks.sbom]
+description = "Generate SBOM using cargo-cyclonedx."
+command = "cargo"
+args = [
+    "cyclonedx",
+    "--format",
+    "json",
+    "--target",
+    "x86_64-unknown-linux-musl",
+]
+
+[tasks.docker]
+description = "Build the Docker image using Docker Buildx."
+script = "docker buildx build --platform=linux/amd64 -t app:latest --load ."
+
+[tasks.release]
+description = "Create a release build and Docker image."
+dependencies = ["build-musl", "docker"]
+
 [tasks.run]
 description = "Run the project."
 command = "cargo"
@@ -63,12 +99,8 @@ command = "cargo"
 args = ["bench", "--all-features"]
 
 [tasks.ci]
-description = "Full CI pipeline."
+description = "Full CI quality check pipeline."
 dependencies = ["fmt", "check", "lint", "test", "deny", "audit"]
-
-[tasks.cd]
-description = "Continuous Deployment tasks."
-dependencies = ["build"]
 
 [tasks.miri]
 description = "Run Miri."
@@ -76,8 +108,8 @@ command = "cargo"
 args = ["miri", "test"]
 toolchain = "nightly"
 
-[tasks.act]
-description = "Run GitHub Actions locally on Ubuntu using act."
+[tasks.act-ci]
+description = "Run GitHub Actions CI locally on Ubuntu using act."
 command = "act"
 args = [
     "-W",

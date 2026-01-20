@@ -5,6 +5,10 @@ edition = "2024"
 license = "MIT"
 description = "Production-grade MPC cryptographic engine."
 
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
 [dependencies]
 rand = "0.9.2"
 zeroize = "1.8"

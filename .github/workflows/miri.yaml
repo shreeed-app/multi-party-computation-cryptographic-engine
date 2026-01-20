@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 0 * * 0"
+  pull_request:
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,6 +18,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache Protoc
+        id: cache-protoc
+        uses: actions/cache@v4
+        with:
+          path: /usr/bin/protoc
+          key: protoc-${{ runner.os }}
+
+      - name: Install Protoc
+        if: steps.cache-protoc.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
       - name: Install Rust nightly with Miri
         uses: actions-rs/toolchain@v1
         with:
@@ -26,6 +40,17 @@ jobs:
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: miri
+
+      - name: Cache Miri sysroot
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/miri
+          key: miri-sysroot-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
+          restore-keys: |
+            miri-sysroot-${{ runner.os }}-
 
       - name: Run Miri
         run: |

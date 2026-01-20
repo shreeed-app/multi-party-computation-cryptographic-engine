@@ -12,7 +12,7 @@ env:
 
 jobs:
   ci:
-    name: Continuous integration (cargo-make)
+    name: Continuous integration
     runs-on: ubuntu-latest
 
     steps:
@@ -21,8 +21,27 @@ jobs:
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: ci
+
+      - name: Cache cargo binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: cargo-bin-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-bin-${{ runner.os }}-
+
+      - name: Cache Protoc
+        id: cache-protoc
+        uses: actions/cache@v4
+        with:
+          path: /usr/bin/protoc
+          key: protoc-${{ runner.os }}
 
       - name: Install system dependencies
+        if: steps.cache-protoc.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
@@ -45,5 +64,5 @@ jobs:
             cargo install cargo-audit --locked
           fi
 
-      - name: Run Continuous integration pipeline (cargo make ci)
+      - name: Continuous integration pipeline
         run: cargo make ci

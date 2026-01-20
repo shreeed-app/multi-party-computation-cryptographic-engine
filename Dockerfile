@@ -7,6 +7,7 @@ RUN apk add --no-cache musl-dev protobuf
 WORKDIR /app
 COPY . .
 
+# Build the application in release mode using MUSL target for static linking.
 RUN cargo build --release
 
 # Final stage.

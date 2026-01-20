@@ -24,23 +24,47 @@ jobs:
     name: Release
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: release
 
-      - name: Install system dependencies
+      - name: Cache cargo binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: cargo-bin-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-bin-${{ runner.os }}-
+
+      - name: Cache Protoc
+        id: cache-protoc
+        uses: actions/cache@v4
+        with:
+          path: /usr/bin/protoc
+          key: protoc-${{ runner.os }}
+
+      - name: Install system dependencies (if needed)
+        if: steps.cache-protoc.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
 
       - name: Install cargo-make
-        run: cargo install cargo-make --locked || true
+        run: |
+          if ! command -v cargo-make >/dev/null 2>&1; then
+            cargo install cargo-make --locked
+          fi
 
       - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked || true
-
-      - name: Build MUSL binary
-        run: cargo make build-musl
+        run: |
+          if ! command -v cargo-cyclonedx >/dev/null 2>&1; then
+            cargo install cargo-cyclonedx --locked
+          fi
 
       - name: Generate SBOM
         run: cargo make sbom
@@ -55,13 +79,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & push image
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            buildx-${{ runner.os }}-
+
+      - name: Build and push image
         run: |
           docker buildx build \
             --platform linux/amd64 \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
             -t $IMAGE_NAME:latest \
             -t $IMAGE_NAME:${{ github.sha }} \
             --push .
+
+      - name: Move Docker cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3

@@ -119,3 +119,16 @@ args = [
     "--container-architecture",
     "linux/amd64",
 ]
+
+[tasks.act-miri]
+description = "Run GitHub Actions Miri locally on Ubuntu using act."
+command = "act"
+args = [
+    "workflow_dispatch",
+    "-W",
+    ".github/workflows/miri.yaml",
+    "-P",
+    "ubuntu-latest=ghcr.io/catthehacker/ubuntu:full-latest",
+    "--container-architecture",
+    "linux/amd64",
+]

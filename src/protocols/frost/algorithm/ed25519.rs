@@ -2,56 +2,20 @@
 
 use frost_ed25519::keys::KeyPackage;
 use frost_ed25519::rand_core::OsRng;
-use frost_ed25519::round1::{SigningCommitments, SigningNonces};
-use frost_ed25519::round2::SignatureShare;
-use frost_ed25519::{Identifier, SigningPackage, round1, round2};
+use frost_ed25519::round1::{SigningCommitments, SigningNonces, commit};
+use frost_ed25519::round2::{SignatureShare, sign};
+use frost_ed25519::{Identifier, SigningPackage};
 
 use rkyv::rancor::Error as RkyvError;
-use rkyv::{
-    Archive, Archived, Deserialize, Serialize, access, deserialize, to_bytes,
-};
+use rkyv::{Archived, access, deserialize};
 
 use crate::messages::error::Error;
 use crate::protocols::algorithm::Algorithm;
+use crate::protocols::codec::{decode_wire, encode_wire};
+use crate::protocols::frost::stored_key::FrostStoredKey;
+use crate::protocols::frost::wire::FrostWire;
 use crate::protocols::signing::SigningProtocol;
 use crate::protocols::types::{ProtocolInit, Round, RoundMessage, Signature};
-
-/// Wire messages exchanged between orchestrator and peer for FROST(Ed25519).
-/// Round 0 (peer -> orchestrator): publish commitments.
-/// Round 1 (orchestrator -> peer): send signing package.
-/// Round 1 response (peer -> orchestrator): signature share.
-#[derive(Debug, PartialEq, Archive, Serialize, Deserialize)]
-enum FrostWire {
-    /// Peer publishes commitments for Round 1.
-    Commitments {
-        /// Participant identifier (non-zero) in u16.
-        identifier: u16,
-        /// postcard(SigningCommitments).
-        commitments: Vec<u8>,
-    },
-
-    /// Orchestrator sends SigningPackage.
-    SigningPackage {
-        /// postcard(SigningPackage).
-        signing_package: Vec<u8>,
-    },
-
-    /// Peer responds with signature share.
-    SignatureShare {
-        identifier: u16,
-        /// postcard(SignatureShare).
-        signature_share: Vec<u8>,
-    },
-}
-
-/// What is stored in Vault for a participant key.
-#[derive(Debug, PartialEq, Archive, Serialize, Deserialize)]
-pub struct FrostStoredKey {
-    /// Non-zero participant identifier in u16.
-    pub identifier: u16,
-    /// postcard(KeyPackage).
-    pub key_package: Vec<u8>,
-}
 
 /// Participant-side FROST(Ed25519) protocol instance.
 pub struct FrostEd25519Protocol {
@@ -67,8 +31,8 @@ pub struct FrostEd25519Protocol {
     pub key_package: KeyPackage,
     /// Participant identifier.
     pub identifier: Identifier,
-    /// Canonical u16 identifier (from Vault).
-    pub identifier_u16: u16,
+    /// Canonical u32 identifier (from Vault).
+    pub identifier_u32: u32,
     /// Nonces generated at round 0 (commitments).
     pub nonces: Option<SigningNonces>,
     /// Signature share after signing.
@@ -90,17 +54,10 @@ impl FrostEd25519Protocol {
     /// # Returns
     /// * `FrostEd25519Protocol` - New protocol instance.
     pub fn try_new(init: ProtocolInit) -> Result<Self, Error> {
-        let algorithm: Algorithm = match init.algorithm.parse::<Algorithm>() {
-            Ok(algorithm) => algorithm,
-            Err(_) => {
-                return Err(Error::UnsupportedAlgorithm(
-                    init.algorithm.clone(),
-                ));
-            }
-        };
-
-        if algorithm != Algorithm::FrostEd25519 {
-            return Err(Error::UnsupportedAlgorithm(init.algorithm.clone()));
+        if init.algorithm != Algorithm::FrostEd25519 {
+            return Err(Error::UnsupportedAlgorithm(
+                init.algorithm.as_str().into(),
+            ));
         }
 
         // Decode FrostStoredKey from Secret<Vec<u8>> using
@@ -127,10 +84,11 @@ impl FrostEd25519Protocol {
                 Err(_) => return Err(Error::InvalidKeyShare),
             };
 
-        let identifier: Identifier = match stored.identifier.try_into() {
-            Ok(id) => id,
-            Err(_) => return Err(Error::InvalidKeyShare),
-        };
+        let identifier: Identifier = Identifier::try_from(
+            u16::try_from(stored.identifier)
+                .map_err(|_| Error::InvalidKeyShare)?,
+        )
+        .map_err(|_| Error::InvalidKeyShare)?;
 
         Ok(Self {
             threshold: init.threshold,
@@ -139,69 +97,43 @@ impl FrostEd25519Protocol {
             message: init.message,
             key_package,
             identifier,
-            identifier_u16: stored.identifier,
+            identifier_u32: stored.identifier,
             nonces: None,
             signature_share: None,
             aborted: false,
         })
     }
-
-    /// Encode a FrostWire message into bytes.
-    ///
-    /// # Arguments
-    /// * `wire` (`&FrostWire`) - Input wire message.
-    ///
-    /// # Errors
-    /// Returns `Error::InvalidMessage` on serialization failure.
-    ///
-    /// # Returns
-    /// * `Vec<u8>` - Encoded bytes.
-    fn encode_wire(wire: &FrostWire) -> Result<Vec<u8>, Error> {
-        // rkyv high-level API: to_bytes::<E>(&T) -> AlignedVec
-        let buffer: rkyv::util::AlignedVec = match to_bytes::<RkyvError>(wire)
-        {
-            Ok(buffer) => buffer,
-            Err(_) => return Err(Error::InvalidMessage),
-        };
-        Ok(buffer.into_vec())
-    }
-
-    /// Decode FrostWire from bytes.
-    ///
-    /// # Arguments
-    /// * `bytes` (`&[u8]`) - Input byte slice.
-    ///
-    /// # Errors
-    /// Returns `Error::InvalidMessage` if validation/deserialization fails.
-    ///
-    /// # Returns
-    /// * `FrostWire` - Decoded wire message.
-    fn decode_wire(bytes: &[u8]) -> Result<FrostWire, Error> {
-        match deserialize::<FrostWire, RkyvError>(
-            match access::<Archived<FrostWire>, RkyvError>(bytes) {
-                Ok(archived) => archived,
-                Err(_) => return Err(Error::InvalidMessage),
-            },
-        ) {
-            Ok(deserialized) => Ok(deserialized),
-            Err(_) => Err(Error::InvalidMessage),
-        }
-    }
 }
 
 impl SigningProtocol for FrostEd25519Protocol {
+    /// Return the algorithm identifier.
+    ///
+    /// # Returns
+    /// * `Algorithm` - Algorithm enum variant.
     fn algorithm(&self) -> Algorithm {
         Algorithm::FrostEd25519
     }
 
+    /// Return the protocol threshold.
+    ///
+    /// # Returns
+    /// * `u32` - Threshold number.
     fn threshold(&self) -> u32 {
         self.threshold
     }
 
+    /// Return the total number of participants.
+    ///
+    /// # Returns
+    /// * `u32` - Number of participants.
     fn participants(&self) -> u32 {
         self.participants
     }
 
+    /// Return the current protocol round.
+    ///
+    /// # Returns
+    /// * `Round` - Current round number.
     fn current_round(&self) -> Round {
         self.round
     }
@@ -228,10 +160,7 @@ impl SigningProtocol for FrostEd25519Protocol {
                 let (nonces, commitments): (
                     SigningNonces,
                     SigningCommitments,
-                ) = round1::commit(
-                    self.key_package.signing_share(),
-                    &mut random,
-                );
+                ) = commit(self.key_package.signing_share(), &mut random);
 
                 self.nonces = Some(nonces);
                 self.round = 1;
@@ -243,12 +172,17 @@ impl SigningProtocol for FrostEd25519Protocol {
                     };
 
                 let wire: FrostWire = FrostWire::Commitments {
-                    identifier: self.identifier_u16,
+                    identifier: self.identifier_u32,
                     commitments: commitments_bytes,
                 };
 
-                let payload: Vec<u8> = Self::encode_wire(&wire)?;
-                Ok(Some(RoundMessage { round: 0, payload }))
+                let payload: Vec<u8> = encode_wire(&wire)?;
+                Ok(Some(RoundMessage {
+                    round: 0,
+                    from: Some(self.identifier_u32),
+                    to: None,
+                    payload,
+                }))
             }
             // Other rounds: no-operation.
             _ => Ok(None),
@@ -283,7 +217,7 @@ impl SigningProtocol for FrostEd25519Protocol {
             return Err(Error::InvalidRound(message.round));
         }
 
-        let wire: FrostWire = Self::decode_wire(&message.payload)?;
+        let wire: FrostWire = decode_wire(&message.payload)?;
 
         match wire {
             FrostWire::SigningPackage { signing_package } => {
@@ -305,14 +239,11 @@ impl SigningProtocol for FrostEd25519Protocol {
                     return Err(Error::InvalidMessage);
                 }
 
-                let signature_share: SignatureShare = match round2::sign(
-                    &signing_package,
-                    &nonces,
-                    &self.key_package,
-                ) {
-                    Ok(share) => share,
-                    Err(_) => return Err(Error::FailedToSign),
-                };
+                let signature_share: SignatureShare =
+                    match sign(&signing_package, &nonces, &self.key_package) {
+                        Ok(share) => share,
+                        Err(_) => return Err(Error::FailedToSign),
+                    };
 
                 self.signature_share = Some(signature_share);
 
@@ -323,12 +254,17 @@ impl SigningProtocol for FrostEd25519Protocol {
                     };
 
                 let output: FrostWire = FrostWire::SignatureShare {
-                    identifier: self.identifier_u16,
+                    identifier: self.identifier_u32,
                     signature_share: signature_bytes,
                 };
 
-                let payload: Vec<u8> = Self::encode_wire(&output)?;
-                Ok(Some(RoundMessage { round: 1, payload }))
+                let payload: Vec<u8> = encode_wire(&output)?;
+                Ok(Some(RoundMessage {
+                    round: 1,
+                    from: Some(self.identifier_u32),
+                    to: None,
+                    payload,
+                }))
             }
             _ => Err(Error::InvalidMessage),
         }
@@ -356,7 +292,7 @@ impl SigningProtocol for FrostEd25519Protocol {
             Ok(bytes) => bytes,
             Err(_) => return Err(Error::InvalidMessage),
         };
-        Ok(Signature { bytes })
+        Ok(Signature::Raw(bytes))
     }
 
     /// Abort the protocol, cleaning up sensitive state.

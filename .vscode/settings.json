@@ -5,6 +5,10 @@
     "editor.codeActionsOnSave": {
         "source.organizeImports": "always"
     },
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.patterns": {
+        "mod.rs": "*.rs",
+    },
     "[rust]": {
         "editor.defaultFormatter": "rust-lang.rust-analyzer",
         "editor.formatOnSave": true
@@ -18,6 +22,7 @@
     },
     "cSpell.words": [
         "allocvec",
+        "bytecheck",
         "catthehacker",
         "clippy",
         "dotenv",
@@ -25,9 +30,11 @@
         "eddsa",
         "miri",
         "prost",
+        "repr",
         "rkyv",
         "rngs",
         "rustflags",
+        "Schnorr",
         "secp",
         "swatinem",
         "thiserror",

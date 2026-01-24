@@ -21,8 +21,8 @@ use strum_macros::{AsRefStr, EnumString};
 pub enum Algorithm {
     /// FROST over Ed25519 (RFC 8032).
     FrostEd25519,
-    /// FROST over Secp256k1.
-    FrostSecp256k1,
+    /// FROST Schnorr over Secp256k1.
+    FrostSchnorrSecp256k1,
     /// GG18 over Secp256k1.
     Gg18Secp256k1,
     /// GG20 over Secp256k1.

@@ -1,10 +1,9 @@
 //! Protocol factory definitions.
 
-use std::str::FromStr;
-
 use crate::messages::error::Error;
 use crate::protocols::algorithm::Algorithm;
-use crate::protocols::eddsa::frost_ed25519::FrostEd25519Protocol;
+use crate::protocols::frost::algorithm::ed25519::FrostEd25519Protocol;
+use crate::protocols::frost::algorithm::schnorr_secp256k1::FrostSchnorrSecp256k1Protocol;
 use crate::protocols::signing::SigningProtocol;
 use crate::protocols::types::ProtocolInit;
 
@@ -27,16 +26,7 @@ impl ProtocolFactory {
     pub fn create(
         init: ProtocolInit,
     ) -> Result<Box<dyn SigningProtocol>, Error> {
-        let algorithm: Algorithm = match Algorithm::from_str(&init.algorithm) {
-            Ok(algorithm) => algorithm,
-            Err(_) => {
-                return Err(Error::UnsupportedAlgorithm(
-                    init.algorithm.clone(),
-                ));
-            }
-        };
-
-        match algorithm {
+        match init.algorithm {
             Algorithm::FrostEd25519 => {
                 match FrostEd25519Protocol::try_new(init) {
                     Ok(protocol) => Ok(Box::new(protocol)),
@@ -44,15 +34,16 @@ impl ProtocolFactory {
                 }
             }
 
-            Algorithm::FrostSecp256k1 => {
-                Err(Error::UnsupportedAlgorithm(init.algorithm.clone()))
+            Algorithm::FrostSchnorrSecp256k1 => {
+                match FrostSchnorrSecp256k1Protocol::try_new(init) {
+                    Ok(protocol) => Ok(Box::new(protocol)),
+                    Err(error) => Err(error),
+                }
             }
-            Algorithm::Gg18Secp256k1 => {
-                Err(Error::UnsupportedAlgorithm(init.algorithm.clone()))
-            }
-            Algorithm::Gg20Secp256k1 => {
-                Err(Error::UnsupportedAlgorithm(init.algorithm.clone()))
-            }
+
+            _ => Err(Error::UnsupportedAlgorithm(
+                init.algorithm.as_str().into(),
+            )),
         }
     }
 }

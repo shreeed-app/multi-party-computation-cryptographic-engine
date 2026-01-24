@@ -37,6 +37,7 @@ impl From<Error> for Status {
             Error::Aborted => Code::Aborted,
 
             Error::Internal(_)
+            | Error::Generic(_)
             | Error::FailedToSign
             | Error::InvalidSignature
             | Error::VaultTokenMissing

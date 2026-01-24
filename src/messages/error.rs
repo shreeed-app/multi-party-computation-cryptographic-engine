@@ -98,6 +98,10 @@ pub enum Error {
     #[error("Internal error: {0}")]
     Internal(String),
 
+    /// Generic error: a generic error with a message.
+    #[error("Error: {0}")]
+    Generic(String),
+
     /// Failed to acquire live lock.
     #[error("Failed to acquire live lock.")]
     LiveLockAcquireError,

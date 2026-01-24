@@ -54,16 +54,24 @@ message SubmitRoundRequest {
   string session_id = 1;
   /// Round number being submitted.
   uint32 round = 2;
+  /// Optional sender identifier.
+  optional uint32 from = 3;
+  /// Optional recipient identifier.
+  optional uint32 to = 4;
   /// Opaque payload.
-  bytes payload = 3;
+  bytes payload = 5;
 }
 
 /// Response containing the next round message.
 message SubmitRoundResponse {
   /// Next round number.
   uint32 round = 1;
+  /// Optional sender identifier.
+  optional uint32 from = 2;
+  /// Optional recipient identifier.
+  optional uint32 to = 3;
   /// Opaque payload.
-  bytes payload = 2;
+  bytes payload = 4;
 }
 
 /// Request to finalize a signing session.
@@ -74,8 +82,23 @@ message FinalizeSessionRequest {
 
 /// Response containing the final signature.
 message FinalizeSessionResponse {
-  /// Chain-compatible signature bytes.
-  bytes signature = 1;
+  /// Signature output.
+  oneof final_signature {
+    /// Raw signature bytes (e.g. Ed25519, Schnorr).
+    bytes raw = 1;
+    /// ECDSA signature.
+    EcdsaSignature ecdsa = 2;
+  }
+}
+
+/// ECDSA signature components.
+message EcdsaSignature {
+  /// 'r' component.
+  bytes r = 1;
+  /// 's' component.
+  bytes s = 2;
+  /// Recovery identifier.
+  uint32 v = 3;
 }
 
 /// Request to abort a signing session.

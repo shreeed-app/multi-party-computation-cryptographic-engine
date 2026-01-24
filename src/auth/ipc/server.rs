@@ -1,5 +1,6 @@
 //! IPC server for the signing engine.
 
+use std::str::FromStr;
 use std::sync::Arc;
 
 use futures::executor::block_on;
@@ -10,12 +11,14 @@ use crate::auth::ipc::auth::AuthProvider;
 use crate::auth::session::identifier::SessionId;
 use crate::engine::api::EngineApi;
 use crate::messages::error::Error;
+use crate::proto::signer::v1::finalize_session_response::FinalSignature;
 use crate::proto::signer::v1::signer_server::Signer;
 use crate::proto::signer::v1::{
-    AbortSessionRequest, AbortSessionResponse, FinalizeSessionRequest,
-    FinalizeSessionResponse, StartSessionRequest, StartSessionResponse,
-    SubmitRoundRequest, SubmitRoundResponse,
+    AbortSessionRequest, AbortSessionResponse, EcdsaSignature,
+    FinalizeSessionRequest, FinalizeSessionResponse, StartSessionRequest,
+    StartSessionResponse, SubmitRoundRequest, SubmitRoundResponse,
 };
+use crate::protocols::algorithm::Algorithm;
 use crate::protocols::types::Signature;
 use crate::protocols::types::{ProtocolInit, RoundMessage};
 use crate::secrets::types::KeyShare;
@@ -104,9 +107,19 @@ impl<
                 Err(error) => return Err(Status::internal(error.to_string())),
             };
 
+        let algorithm: Algorithm =
+            match Algorithm::from_str(&request.algorithm) {
+                Ok(algorithm) => algorithm,
+                Err(_) => {
+                    return Err(Status::from(Error::UnsupportedAlgorithm(
+                        request.algorithm.clone(),
+                    )));
+                }
+            };
+
         let init: ProtocolInit = ProtocolInit {
             key_id: request.key_id.clone(),
-            algorithm: request.algorithm.clone(),
+            algorithm,
             threshold: request.threshold,
             participants: request.participants,
             message: request.message.clone(),
@@ -161,6 +174,8 @@ impl<
 
         let message: RoundMessage = RoundMessage {
             round: request.round,
+            from: request.from,
+            to: request.to,
             payload: request.payload.clone(),
         };
         let round_message: RoundMessage =
@@ -171,6 +186,8 @@ impl<
 
         Ok(Response::new(SubmitRoundResponse {
             round: round_message.round,
+            from: round_message.from,
+            to: round_message.to,
             payload: round_message.payload,
         }))
     }
@@ -215,7 +232,16 @@ impl<
         };
 
         Ok(Response::new(FinalizeSessionResponse {
-            signature: signature.bytes,
+            final_signature: Some(match signature {
+                Signature::Raw(bytes) => FinalSignature::Raw(bytes),
+                Signature::EcdsaSecp256k1 { r, s, v } => {
+                    FinalSignature::Ecdsa(EcdsaSignature {
+                        r: r.to_vec(),
+                        s: s.to_vec(),
+                        v: v as u32,
+                    })
+                }
+            }),
         }))
     }
 

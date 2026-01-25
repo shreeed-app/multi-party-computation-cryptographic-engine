@@ -42,7 +42,7 @@ impl SessionState {
                 } else {
                     Err(Error::SessionStateInitialized(round))
                 }
-            }
+            },
 
             // In-progress state: only the next round is valid.
             SessionState::InProgress { current_round } => {
@@ -54,12 +54,12 @@ impl SessionState {
                         round,
                     ))
                 }
-            }
+            },
 
             // Terminal states: no further rounds are valid.
             SessionState::Finalized | SessionState::Aborted => {
                 Err(Error::SessionStateFinalized)
-            }
+            },
         }
     }
 
@@ -77,8 +77,8 @@ impl SessionState {
     /// Mark the session as finalized.
     ///
     /// # Errors
-    /// * `Error` - Returns `InvalidSessionState` if the session is not in
-    ///   a state that can be finalized.
+    /// * `Error` - Returns `InvalidSessionState` if the session is not in a
+    ///   state that can be finalized.
     ///
     /// # Returns
     /// * `()` - Returns unit on success.
@@ -87,7 +87,7 @@ impl SessionState {
             SessionState::InProgress { .. } => {
                 *self = SessionState::Finalized;
                 Ok(())
-            }
+            },
             _ => Err(Error::SessionStateNotFinalized),
         }
     }

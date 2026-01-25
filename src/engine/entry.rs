@@ -2,8 +2,10 @@
 
 use std::sync::Mutex;
 
-use crate::auth::session::state::SessionState;
-use crate::protocols::signing::SigningProtocol;
+use crate::{
+    auth::session::state::SessionState,
+    protocols::signing::SigningProtocol,
+};
 
 /// A live session entry held in memory.
 /// The protocol is protected by a mutex to guarantee

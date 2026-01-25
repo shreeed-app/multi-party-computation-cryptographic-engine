@@ -1,8 +1,16 @@
 //! Signing protocol trait definitions.
 
-use crate::messages::error::Error;
-use crate::protocols::algorithm::Algorithm;
-use crate::protocols::types::{Round, RoundMessage, Signature};
+use crate::{
+    messages::error::Error,
+    protocols::{
+        algorithm::Algorithm,
+        types::{
+            Round,
+            RoundMessage,
+            Signature,
+        },
+    },
+};
 
 /// Trait implemented by all protocols. Each protocol instance corresponds
 /// to a single signing session.

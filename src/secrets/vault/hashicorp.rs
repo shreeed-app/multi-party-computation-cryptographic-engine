@@ -1,19 +1,31 @@
 //! HashiCorp Vault provider (KV v2).
 
 use async_trait::async_trait;
-use base64::Engine as _;
-use base64::engine::general_purpose;
-use serde_json::Value;
-use vaultrs::client::{
-    VaultClient, VaultClientSettings, VaultClientSettingsBuilder,
+use base64::{
+    Engine as _,
+    engine::general_purpose,
 };
-use vaultrs::kv2;
+use serde_json::Value;
+use vaultrs::{
+    client::{
+        VaultClient,
+        VaultClientSettings,
+        VaultClientSettingsBuilder,
+    },
+    kv2,
+};
 
-use crate::config::EnvConfig;
-use crate::messages::error::Error;
-use crate::secrets::secret::Secret;
-use crate::secrets::vault::api::VaultProvider;
-use crate::secrets::vault::config::VaultConfig;
+use crate::{
+    config::EnvConfig,
+    messages::error::Error,
+    secrets::{
+        secret::Secret,
+        vault::{
+            api::VaultProvider,
+            config::VaultConfig,
+        },
+    },
+};
 
 /// HashiCorp Vault KVv2 provider.
 /// It reads secrets from {mount}/{prefix}/{key_id}.

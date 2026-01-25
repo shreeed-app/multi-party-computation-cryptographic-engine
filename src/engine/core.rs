@@ -1,18 +1,37 @@
 //! Engine implementation.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{
+        Mutex,
+        MutexGuard,
+        RwLock,
+        RwLockWriteGuard,
+    },
+    time::Duration,
+};
 
-use crate::auth::session::identifier::SessionId;
-use crate::auth::session::state::SessionState;
-use crate::auth::session::store::SessionStore;
-use crate::engine::api::EngineApi;
-use crate::engine::entry::SessionEntry;
-use crate::messages::error::Error;
-use crate::protocols::factory::ProtocolFactory;
-use crate::protocols::signing::SigningProtocol;
-use crate::protocols::types::{ProtocolInit, RoundMessage, Signature};
+use crate::{
+    auth::session::{
+        identifier::SessionId,
+        state::SessionState,
+        store::SessionStore,
+    },
+    engine::{
+        api::EngineApi,
+        entry::SessionEntry,
+    },
+    messages::error::Error,
+    protocols::{
+        factory::ProtocolFactory,
+        signing::SigningProtocol,
+        types::{
+            ProtocolInit,
+            RoundMessage,
+            Signature,
+        },
+    },
+};
 
 /// Engine implementation.
 pub struct Engine {
@@ -74,7 +93,7 @@ impl EngineApi for Engine {
                 Err(err) => {
                     self.sessions.remove(session_id);
                     return Err(err);
-                }
+                },
             };
 
         let round: RoundMessage = match protocol.next_round() {
@@ -82,11 +101,11 @@ impl EngineApi for Engine {
             Ok(None) => {
                 self.sessions.remove(session_id);
                 return Err(Error::InvalidState(session_id.to_string()));
-            }
+            },
             Err(error) => {
                 self.sessions.remove(session_id);
                 return Err(error);
-            }
+            },
         };
 
         match self.sessions.with_session(
@@ -96,11 +115,11 @@ impl EngineApi for Engine {
                 Ok(())
             },
         ) {
-            Ok(_) => {}
+            Ok(_) => {},
             Err(error) => {
                 self.sessions.remove(session_id);
                 return Err(error);
-            }
+            },
         }
 
         let entry: SessionEntry = SessionEntry {
@@ -113,7 +132,7 @@ impl EngineApi for Engine {
             Err(_) => {
                 self.sessions.remove(session_id);
                 return Err(Error::LiveLockAcquireError);
-            }
+            },
         }
         .insert(session_id, entry);
 
@@ -139,7 +158,7 @@ impl EngineApi for Engine {
             session_id,
             |state: &mut SessionState| {
                 match state.validate_round(message.round) {
-                    Ok(_) => {}
+                    Ok(_) => {},
                     Err(error) => return Err(error),
                 }
 
@@ -150,7 +169,7 @@ impl EngineApi for Engine {
                     Ok(guard) => guard,
                     Err(_) => {
                         return Err(Error::LiveLockAcquireError);
-                    }
+                    },
                 };
 
                 let entry: &mut SessionEntry = match live.get_mut(&session_id)
@@ -160,7 +179,7 @@ impl EngineApi for Engine {
                         return Err(Error::SessionNotFound(
                             session_id.to_string(),
                         ));
-                    }
+                    },
                 };
 
                 let mut protocol: MutexGuard<
@@ -178,12 +197,12 @@ impl EngineApi for Engine {
                             return Err(Error::InvalidState(
                                 session_id.to_string(),
                             ));
-                        }
+                        },
                         Err(_) => {
                             return Err(Error::InvalidState(
                                 session_id.to_string(),
                             ));
-                        }
+                        },
                     };
 
                 state.advance_round(response.round);
@@ -213,7 +232,7 @@ impl EngineApi for Engine {
             session_id,
             |state: &mut SessionState| {
                 match state.finalize() {
-                    Ok(_) => {}
+                    Ok(_) => {},
                     Err(error) => return Err(error),
                 }
 
@@ -228,7 +247,7 @@ impl EngineApi for Engine {
                         return Err(Error::SessionNotFound(
                             session_id.to_string(),
                         ));
-                    }
+                    },
                 };
 
                 let protocol: Box<dyn SigningProtocol> =

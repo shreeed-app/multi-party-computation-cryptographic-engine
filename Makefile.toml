@@ -1,45 +1,77 @@
+[tasks.sort]
+description = "Sort the Cargo.toml dependencies."
+category = "Maintenance"
+command = "cargo"
+install_crate = "cargo-sort"
+args = ["sort", "--workspace"]
+
+[tasks.unused-deps]
+description = "Detect unused dependencies in the Cargo.toml file using cargo-machete."
+category = "Maintenance"
+install_crate = "cargo-machete"
+command = "cargo"
+args = ["machete"]
+
 [tasks.check]
 description = "Perform a cargo check."
+category = "Development"
 command = "cargo"
 args = ["check"]
 
 [tasks.test]
 description = "Run tests with all features."
+category = ""
 command = "cargo"
 args = ["test", "--all-features"]
 
+[tasks.fmt-check]
+description = "Check code formatting."
+category = "Development"
+command = "cargo"
+env = { RUSTUP_TOOLCHAIN = "nightly" }
+args = ["fmt", "--all", "--", "--check"]
+
 [tasks.fmt]
 description = "Check code formatting."
+category = "Development"
 command = "cargo"
-args = ["fmt", "--all", "--", "--check"]
+env = { RUSTUP_TOOLCHAIN = "nightly" }
+args = ["fmt", "--all"]
 
 [tasks.lint]
 description = "Run Clippy linter."
+category = "Development"
 command = "cargo"
 args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
 
 [tasks.clean]
 description = "Clean the project."
+category = "Maintenance"
 command = "cargo"
 args = ["clean"]
 
 [tasks.update]
 description = "Update dependencies."
+category = "Maintenance"
 command = "cargo"
 args = ["update"]
 
 [tasks.upgrade]
 description = "Upgrade dependencies to the latest versions."
+category = "Maintenance"
+install_crate = "cargo-upgrade"
 command = "cargo"
 args = ["upgrade"]
 
 [tasks.build]
 description = "Build the project in release mode."
+category = "Build"
 command = "cargo"
 args = ["build", "--release"]
 
 [tasks.build-musl]
 description = "Build Linux MUSL binary using Docker."
+category = "Build"
 command = "docker"
 args = [
     "run",
@@ -57,6 +89,8 @@ args = [
 
 [tasks.sbom]
 description = "Generate SBOM using cargo-cyclonedx."
+category = "Security"
+install_crate = "cargo-cyclonedx"
 command = "cargo"
 args = [
     "cyclonedx",
@@ -68,10 +102,12 @@ args = [
 
 [tasks.docker]
 description = "Build the Docker image using Docker Buildx."
+category = "Build"
 script = "docker buildx build --platform=linux/amd64 -t app:latest --load ."
 
 [tasks.release]
 description = "Create a release build and Docker image."
+category = "Release"
 dependencies = ["build-musl", "docker"]
 
 [tasks.run]
@@ -81,11 +117,15 @@ args = ["run"]
 
 [tasks.deny]
 description = "Run cargo-deny to check for license and security issues."
+category = "Security"
+install_crate = "cargo-deny"
 command = "cargo"
 args = ["deny", "check"]
 
 [tasks.audit]
 description = "Run cargo-audit to check for vulnerabilities."
+category = "Security"
+install_crate = "cargo-audit"
 command = "cargo"
 args = ["audit"]
 
@@ -95,21 +135,25 @@ dependencies = ["fmt", "check", "test"]
 
 [tasks.bench]
 description = "Run benchmarks with all features."
+category = "Development"
 command = "cargo"
 args = ["bench", "--all-features"]
 
 [tasks.ci]
 description = "Full CI quality check pipeline."
-dependencies = ["fmt", "check", "lint", "test", "deny", "audit"]
+category = "CI"
+dependencies = ["fmt-check", "check", "lint", "test", "deny", "audit"]
 
 [tasks.miri]
 description = "Run Miri."
+category = "Development"
 command = "cargo"
 args = ["miri", "test"]
 toolchain = "nightly"
 
 [tasks.act-ci]
 description = "Run GitHub Actions CI locally on Ubuntu using act."
+category = "CI"
 command = "act"
 args = [
     "-W",
@@ -122,6 +166,7 @@ args = [
 
 [tasks.act-miri]
 description = "Run GitHub Actions Miri locally on Ubuntu using act."
+category = "CI"
 command = "act"
 args = [
     "workflow_dispatch",

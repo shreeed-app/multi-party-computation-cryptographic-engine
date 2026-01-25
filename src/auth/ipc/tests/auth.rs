@@ -1,10 +1,18 @@
 //! Tests for the authentication module.
-use rand::Rng;
-use rand::distr::Alphanumeric;
+use rand::{
+    Rng,
+    distr::Alphanumeric,
+    prelude::ThreadRng,
+};
 use tonic::Request;
 
-use crate::auth::ipc::auth::{AuthProvider, TokenAuth};
-use crate::messages::error::Error;
+use crate::{
+    auth::ipc::auth::{
+        AuthProvider,
+        TokenAuth,
+    },
+    messages::error::Error,
+};
 
 /// Generates a random alphanumeric token of the specified length.
 ///
@@ -14,7 +22,7 @@ use crate::messages::error::Error;
 /// # Returns
 /// `String` - A randomly generated alphanumeric token.
 pub fn random_token(len: usize) -> String {
-    let mut random: rand::prelude::ThreadRng = rand::rng();
+    let mut random: ThreadRng = rand::rng();
     (&mut random).sample_iter(Alphanumeric).take(len).map(char::from).collect()
 }
 

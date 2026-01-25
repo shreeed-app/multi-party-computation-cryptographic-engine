@@ -66,13 +66,17 @@ pub enum Error {
     #[error("Invalid signature.")]
     InvalidSignature,
 
+    /// Invalid participant: participant identifier is not recognized.
+    #[error("Invalid participant.")]
+    InvalidParticipant,
+
     /// Failed to sign: protocol failed to produce a valid signature.
     #[error("Failed to sign.")]
     FailedToSign,
 
-    /// Threshold not satisfied: not enough participants to proceed.
-    #[error("Threshold not satisfied: {0}")]
-    ThresholdNotMet(String),
+    /// Invalid threshold: threshold value is invalid.
+    #[error("Invalid threshold.")]
+    InvalidThreshold,
 
     /// Vault token missing: no token provided for vault access.
     #[error("Vault token missing.")]

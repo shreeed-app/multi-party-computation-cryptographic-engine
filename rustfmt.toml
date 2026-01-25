@@ -1,4 +1,19 @@
 max_width = 79
 hard_tabs = false
 tab_spaces = 4
+
 use_small_heuristics = "Max"
+
+wrap_comments = true
+comment_width = 79
+
+fn_params_layout = "Tall"
+match_block_trailing_comma = true
+
+reorder_imports = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"
+imports_layout = "Vertical"
+
+brace_style = "SameLineWhere"
+control_brace_style = "AlwaysSameLine"

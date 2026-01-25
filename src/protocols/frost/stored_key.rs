@@ -1,6 +1,10 @@
 //! FROST stored key representation.
 
-use rkyv::{Archive, Deserialize, Serialize};
+use rkyv::{
+    Archive,
+    Deserialize,
+    Serialize,
+};
 
 /// Stored in Vault for any FROST participant.
 #[derive(Debug, PartialEq, Archive, Serialize, Deserialize)]

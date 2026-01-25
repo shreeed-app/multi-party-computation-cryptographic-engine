@@ -1,10 +1,16 @@
 //! Tests for the session store.
-use std::thread::sleep;
-use std::time::Duration;
+use std::{
+    thread::sleep,
+    time::Duration,
+};
 
-use crate::auth::session::identifier::SessionId;
-use crate::auth::session::store::SessionStore;
-use crate::messages::error::Error;
+use crate::{
+    auth::session::{
+        identifier::SessionId,
+        store::SessionStore,
+    },
+    messages::error::Error,
+};
 
 /// Tests that a session can be created and accessed.
 ///

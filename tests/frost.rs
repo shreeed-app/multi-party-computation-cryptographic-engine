@@ -1,20 +1,38 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{
+    BTreeMap,
+    HashMap,
+};
 
-use mpc_signer_engine::auth::session::identifier::SessionId;
-use mpc_signer_engine::engine::api::EngineApi;
-use mpc_signer_engine::engine::builder::EngineBuilder;
-use mpc_signer_engine::engine::core::Engine;
-use mpc_signer_engine::messages::error::Error;
-use mpc_signer_engine::protocols::algorithm::Algorithm;
-use mpc_signer_engine::protocols::frost::stored_key::FrostStoredKey;
-use mpc_signer_engine::protocols::frost::wire::FrostWire;
-use mpc_signer_engine::protocols::types::{ProtocolInit, RoundMessage};
-use mpc_signer_engine::secrets::secret::Secret;
-
-use rand_core::{OsRng, RngCore};
-
-use rkyv::rancor::Error as RkyvError;
-use rkyv::{from_bytes, to_bytes};
+use mpc_signer_engine::{
+    auth::session::identifier::SessionId,
+    engine::{
+        api::EngineApi,
+        builder::EngineBuilder,
+        core::Engine,
+    },
+    messages::error::Error,
+    protocols::{
+        algorithm::Algorithm,
+        frost::{
+            stored_key::FrostStoredKey,
+            wire::FrostWire,
+        },
+        types::{
+            ProtocolInit,
+            RoundMessage,
+        },
+    },
+    secrets::secret::Secret,
+};
+use rand_core::{
+    OsRng,
+    RngCore,
+};
+use rkyv::{
+    from_bytes,
+    rancor::Error as RkyvError,
+    to_bytes,
+};
 
 /// Overall test setup configuration.
 struct TestSetup {
@@ -56,19 +74,24 @@ macro_rules! define_frost_suite {
         $algorithm_variant:expr
     ) => {
         mod $mod_name {
-            use super::*;
-
+            use frost_impl::{
+                Identifier,
+                Signature,
+                SigningPackage,
+                aggregate,
+                keys::{
+                    IdentifierList,
+                    KeyPackage,
+                    PublicKeyPackage,
+                    SecretShare,
+                    generate_with_dealer,
+                },
+                round1::SigningCommitments,
+                round2::SignatureShare,
+            };
             use $frost_crate as frost_impl;
 
-            use frost_impl::keys::{
-                IdentifierList, KeyPackage, PublicKeyPackage, SecretShare,
-                generate_with_dealer,
-            };
-            use frost_impl::round1::SigningCommitments;
-            use frost_impl::round2::SignatureShare;
-            use frost_impl::{
-                Identifier, Signature, SigningPackage, aggregate,
-            };
+            use super::*;
 
             struct Participants<'l> {
                 public_key_package: PublicKeyPackage,
@@ -210,7 +233,8 @@ macro_rules! define_frost_suite {
                     .map_err(|_| Error::InvalidMessage)?
                     .into_vec();
 
-                // Round 1: submit signing package and collect signature shares.
+                // Round 1: submit signing package and collect signature
+                // shares.
                 let mut shares: BTreeMap<Identifier, SignatureShare> =
                     BTreeMap::new();
 

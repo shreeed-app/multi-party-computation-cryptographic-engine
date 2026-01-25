@@ -24,8 +24,8 @@ impl<T: Zeroize> Secret<T> {
     /// Borrow the secret immutably for a limited scope.
     ///
     /// # Arguments
-    /// * `func` (`impl FnOnce(&T) -> R`) - Closure to execute with the
-    ///   secret reference.
+    /// * `func` (`impl FnOnce(&T) -> R`) - Closure to execute with the secret
+    ///   reference.
     ///
     /// # Returns
     /// * `R` - Result of the closure execution.

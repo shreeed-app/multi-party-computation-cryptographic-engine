@@ -1,9 +1,15 @@
 //! Configuration module for loading settings from environment variables.
 
-use figment::providers::Env;
-use figment::{Error, Figment};
+use figment::{
+    Error,
+    Figment,
+    providers::Env,
+};
 use once_cell::sync::Lazy;
-use serde::{Deserialize, Deserializer};
+use serde::{
+    Deserialize,
+    Deserializer,
+};
 
 /// Custom deserializer that converts empty strings to `None`.
 ///

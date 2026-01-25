@@ -1,8 +1,14 @@
 //! Signer engine API definitions.
 
-use crate::auth::session::identifier::SessionId;
-use crate::messages::error::Error;
-use crate::protocols::types::{ProtocolInit, RoundMessage, Signature};
+use crate::{
+    auth::session::identifier::SessionId,
+    messages::error::Error,
+    protocols::types::{
+        ProtocolInit,
+        RoundMessage,
+        Signature,
+    },
+};
 
 /// Public engine interface exposed to the IPC layer.
 pub trait EngineApi: Send + Sync + 'static {

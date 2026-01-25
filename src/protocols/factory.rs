@@ -1,11 +1,18 @@
 //! Protocol factory definitions.
 
-use crate::messages::error::Error;
-use crate::protocols::algorithm::Algorithm;
-use crate::protocols::frost::algorithm::ed25519::FrostEd25519Protocol;
-use crate::protocols::frost::algorithm::schnorr_secp256k1::FrostSchnorrSecp256k1Protocol;
-use crate::protocols::signing::SigningProtocol;
-use crate::protocols::types::ProtocolInit;
+use crate::{
+    messages::error::Error,
+    protocols::{
+        algorithm::Algorithm,
+        cggmp24::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1Protocol,
+        frost::{
+            ed25519::FrostEd25519Protocol,
+            schnorr_secp256k1::FrostSchnorrSecp256k1Protocol,
+        },
+        signing::SigningProtocol,
+        types::ProtocolInit,
+    },
+};
 
 /// Factory responsible for instantiating signing protocols.
 /// This is the single dispatch point for protocol selection.
@@ -18,8 +25,8 @@ impl ProtocolFactory {
     /// * `init` (`ProtocolInit`) - Protocol initialization context.
     ///
     /// # Errors
-    /// * `Error::UnsupportedAlgorithm` if the algorithm is not
-    ///   supported or cannot be parsed.
+    /// * `Error::UnsupportedAlgorithm` if the algorithm is not supported or
+    ///   cannot be parsed.
     ///
     /// # Returns
     /// * `Box<dyn SigningProtocol>` - Initialized protocol instance.
@@ -32,18 +39,18 @@ impl ProtocolFactory {
                     Ok(protocol) => Ok(Box::new(protocol)),
                     Err(error) => Err(error),
                 }
-            }
+            },
 
             Algorithm::FrostSchnorrSecp256k1 => {
                 match FrostSchnorrSecp256k1Protocol::try_new(init) {
                     Ok(protocol) => Ok(Box::new(protocol)),
                     Err(error) => Err(error),
                 }
-            }
+            },
 
-            _ => Err(Error::UnsupportedAlgorithm(
-                init.algorithm.as_str().into(),
-            )),
+            Algorithm::Cggmp24EcdsaSecp256k1 => {
+                Ok(Box::new(Cggmp24EcdsaSecp256k1Protocol::try_new(init)?))
+            },
         }
     }
 }

@@ -1,18 +1,27 @@
-use std::net::SocketAddr;
-use std::time::Duration;
+use std::{
+    net::SocketAddr,
+    time::Duration,
+};
 
-use mpc_signer_engine::config::EnvConfig;
-use mpc_signer_engine::engine::core::Engine;
-use mpc_signer_engine::messages::error::Error;
+use mpc_signer_engine::{
+    auth::ipc::{
+        auth::TokenAuth,
+        config::IpcConfig,
+        server::IpcServer,
+    },
+    config::EnvConfig,
+    engine::{
+        builder::EngineBuilder,
+        core::Engine,
+    },
+    messages::error::Error,
+    proto::signer::v1::signer_server::SignerServer,
+    secrets::vault::{
+        config::VaultConfig,
+        hashicorp::HashicorpVaultProvider,
+    },
+};
 use tonic::transport::Server;
-
-use mpc_signer_engine::auth::ipc::auth::TokenAuth;
-use mpc_signer_engine::auth::ipc::config::IpcConfig;
-use mpc_signer_engine::auth::ipc::server::IpcServer;
-use mpc_signer_engine::engine::builder::EngineBuilder;
-use mpc_signer_engine::proto::signer::v1::signer_server::SignerServer;
-use mpc_signer_engine::secrets::vault::config::VaultConfig;
-use mpc_signer_engine::secrets::vault::hashicorp::HashicorpVaultProvider;
 
 /// Main entry point.
 /// Loads configuration, initializes components, and starts the IPC server.

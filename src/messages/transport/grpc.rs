@@ -1,6 +1,9 @@
 //! gRPC error conversions.
 
-use tonic::{Code, Status};
+use tonic::{
+    Code,
+    Status,
+};
 
 use crate::messages::error::Error;
 
@@ -29,11 +32,12 @@ impl From<Error> for Status {
             | Error::InvalidKeyShare
             | Error::InvalidState(_)
             | Error::InvalidRound(_)
+            | Error::InvalidParticipant
+            | Error::InvalidThreshold
             | Error::InvalidMessage => Code::FailedPrecondition,
 
             Error::UnsupportedAlgorithm(_) => Code::Unimplemented,
 
-            Error::ThresholdNotMet(_) => Code::InvalidArgument,
             Error::Aborted => Code::Aborted,
 
             Error::Internal(_)

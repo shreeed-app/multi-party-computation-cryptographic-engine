@@ -1,7 +1,12 @@
 //! IPC authentication for gRPC requests.
 
-use tonic::Request;
-use tonic::metadata::{Ascii, MetadataValue};
+use tonic::{
+    Request,
+    metadata::{
+        Ascii,
+        MetadataValue,
+    },
+};
 
 use crate::messages::error::Error;
 

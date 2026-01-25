@@ -1,6 +1,9 @@
 //! Protocol types used across different protocol implementations.
 
-use crate::{protocols::algorithm::Algorithm, secrets::types::KeyShare};
+use crate::{
+    protocols::algorithm::Algorithm,
+    secrets::types::KeyShare,
+};
 
 /// Protocol round number.
 pub type Round = u32;

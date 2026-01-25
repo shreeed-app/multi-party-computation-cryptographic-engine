@@ -27,6 +27,14 @@ impl SessionId {
     pub fn parse(input: &str) -> Option<Self> {
         Uuid::parse_str(input).ok().map(Self)
     }
+
+    /// Get the raw bytes of the session identifier.
+    ///
+    /// # Returns
+    /// * `[u8; 16]` - The session ID as raw bytes.
+    pub fn as_bytes(&self) -> [u8; 16] {
+        *self.0.as_bytes()
+    }
 }
 
 impl fmt::Display for SessionId {

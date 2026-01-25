@@ -1,7 +1,13 @@
 //! Supported signing algorithms.
 
-use serde::{Deserialize, Serialize};
-use strum_macros::{AsRefStr, EnumString};
+use serde::{
+    Deserialize,
+    Serialize,
+};
+use strum_macros::{
+    AsRefStr,
+    EnumString,
+};
 
 /// Supported signing algorithms.
 #[derive(
@@ -23,10 +29,8 @@ pub enum Algorithm {
     FrostEd25519,
     /// FROST Schnorr over Secp256k1.
     FrostSchnorrSecp256k1,
-    /// GG18 over Secp256k1.
-    Gg18Secp256k1,
-    /// GG20 over Secp256k1.
-    Gg20Secp256k1,
+    /// CGGMP'24 ECDSA over Secp256k1.
+    Cggmp24EcdsaSecp256k1,
 }
 
 impl Algorithm {

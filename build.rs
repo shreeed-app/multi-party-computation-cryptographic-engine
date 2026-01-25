@@ -1,5 +1,8 @@
-use std::error::Error;
-use std::path::Path;
+use std::{
+    error::Error,
+    path::Path,
+};
+
 use tonic_prost_build::configure;
 
 const PROTO_DIRECTORY: &str = "proto/signer/v1";

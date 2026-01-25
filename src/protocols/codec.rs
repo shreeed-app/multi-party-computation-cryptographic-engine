@@ -1,15 +1,30 @@
 //! Codec for wire messages using rkyv serialization.
 
-use crate::messages::error::Error;
-use rkyv::rancor::{Error as RkyvError, Strategy};
-use rkyv::{Archive, Deserialize, Serialize, from_bytes, to_bytes};
-
-use rkyv::bytecheck::CheckBytes;
-use rkyv::ser::{Serializer, allocator::ArenaHandle, sharing::Share};
-use rkyv::util::AlignedVec;
-use rkyv::validation::{
-    Validator, archive::ArchiveValidator, shared::SharedValidator,
+use rkyv::{
+    Archive,
+    Deserialize,
+    Serialize,
+    bytecheck::CheckBytes,
+    from_bytes,
+    rancor::{
+        Error as RkyvError,
+        Strategy,
+    },
+    ser::{
+        Serializer,
+        allocator::ArenaHandle,
+        sharing::Share,
+    },
+    to_bytes,
+    util::AlignedVec,
+    validation::{
+        Validator,
+        archive::ArchiveValidator,
+        shared::SharedValidator,
+    },
 };
+
+use crate::messages::error::Error;
 
 type HighSerializer<'a> =
     Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, RkyvError>;

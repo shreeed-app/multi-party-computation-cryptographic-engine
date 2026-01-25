@@ -1,12 +1,24 @@
 //! In-memory session store.
 
-use std::collections::HashMap;
-use std::sync::{RwLock, RwLockWriteGuard};
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    sync::{
+        RwLock,
+        RwLockWriteGuard,
+    },
+    time::{
+        Duration,
+        Instant,
+    },
+};
 
-use crate::auth::session::identifier::SessionId;
-use crate::auth::session::state::SessionState;
-use crate::messages::error::Error;
+use crate::{
+    auth::session::{
+        identifier::SessionId,
+        state::SessionState,
+    },
+    messages::error::Error,
+};
 
 /// This store is process-local and not persistent.
 /// Sessions are automatically expired after a TTL.
@@ -66,8 +78,8 @@ impl SessionStore {
     /// * `f` (`F`) - Closure that performs the state transition.
     ///
     /// # Errors
-    /// * `Error` - Returns an error if the session is not found or
-    ///   the state transition fails.
+    /// * `Error` - Returns an error if the session is not found or the state
+    ///   transition fails.
     ///
     /// # Returns
     /// * `R` - Returns the result of the closure on success.

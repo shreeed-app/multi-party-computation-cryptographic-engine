@@ -1,28 +1,51 @@
 //! IPC server for the signing engine.
 
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{
+    str::FromStr,
+    sync::Arc,
+};
 
 use futures::executor::block_on;
 use tokio::task::spawn_blocking;
-use tonic::{Request, Response, Status};
-
-use crate::auth::ipc::auth::AuthProvider;
-use crate::auth::session::identifier::SessionId;
-use crate::engine::api::EngineApi;
-use crate::messages::error::Error;
-use crate::proto::signer::v1::finalize_session_response::FinalSignature;
-use crate::proto::signer::v1::signer_server::Signer;
-use crate::proto::signer::v1::{
-    AbortSessionRequest, AbortSessionResponse, EcdsaSignature,
-    FinalizeSessionRequest, FinalizeSessionResponse, StartSessionRequest,
-    StartSessionResponse, SubmitRoundRequest, SubmitRoundResponse,
+use tonic::{
+    Request,
+    Response,
+    Status,
 };
-use crate::protocols::algorithm::Algorithm;
-use crate::protocols::types::Signature;
-use crate::protocols::types::{ProtocolInit, RoundMessage};
-use crate::secrets::types::KeyShare;
-use crate::secrets::vault::api::VaultProvider;
+
+use crate::{
+    auth::{
+        ipc::auth::AuthProvider,
+        session::identifier::SessionId,
+    },
+    engine::api::EngineApi,
+    messages::error::Error,
+    proto::signer::v1::{
+        AbortSessionRequest,
+        AbortSessionResponse,
+        EcdsaSignature,
+        FinalizeSessionRequest,
+        FinalizeSessionResponse,
+        StartSessionRequest,
+        StartSessionResponse,
+        SubmitRoundRequest,
+        SubmitRoundResponse,
+        finalize_session_response::FinalSignature,
+        signer_server::Signer,
+    },
+    protocols::{
+        algorithm::Algorithm,
+        types::{
+            ProtocolInit,
+            RoundMessage,
+            Signature,
+        },
+    },
+    secrets::{
+        types::KeyShare,
+        vault::api::VaultProvider,
+    },
+};
 
 /// gRPC IPC server exposing the signing engine.
 pub struct IpcServer<A: AuthProvider, E: EngineApi, V: VaultProvider> {
@@ -114,7 +137,7 @@ impl<
                     return Err(Status::from(Error::UnsupportedAlgorithm(
                         request.algorithm.clone(),
                     )));
-                }
+                },
             };
 
         let init: ProtocolInit = ProtocolInit {
@@ -169,7 +192,7 @@ impl<
                 return Err(Status::from(Error::SessionNotFound(
                     request.session_id.clone(),
                 )));
-            }
+            },
         };
 
         let message: RoundMessage = RoundMessage {
@@ -223,7 +246,7 @@ impl<
                 return Err(Status::from(Error::SessionNotFound(
                     request.session_id.clone(),
                 )));
-            }
+            },
         };
 
         let signature: Signature = match self.engine.finalize(session_id) {
@@ -240,7 +263,7 @@ impl<
                         s: s.to_vec(),
                         v: v as u32,
                     })
-                }
+                },
             }),
         }))
     }
@@ -274,7 +297,7 @@ impl<
                 return Err(Status::from(Error::SessionNotFound(
                     request.session_id.clone(),
                 )));
-            }
+            },
         };
 
         match self.engine.abort(session_id) {

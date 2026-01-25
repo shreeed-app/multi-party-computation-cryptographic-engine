@@ -1,6 +1,10 @@
 //! Vault configuration loader.
 
-use config::{Config, ConfigError, File};
+use config::{
+    Config,
+    ConfigError,
+    File,
+};
 use serde::Deserialize;
 
 /// HashiCorp Vault KVv2 configuration.

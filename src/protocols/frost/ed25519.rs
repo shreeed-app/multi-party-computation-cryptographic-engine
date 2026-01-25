@@ -1,81 +1,115 @@
-//! Frost-secp256k1 (Schnorr) participant-side protocol implementation.
+//! Frost-ed25519 participant-side protocol implementation.
 
-use frost_secp256k1::keys::KeyPackage;
-use frost_secp256k1::rand_core::OsRng;
-use frost_secp256k1::round1::{SigningCommitments, SigningNonces, commit};
-use frost_secp256k1::round2::{SignatureShare, sign};
-use frost_secp256k1::{Identifier, SigningPackage};
+use frost_ed25519::{
+    Identifier,
+    SigningPackage,
+    keys::KeyPackage,
+    rand_core::OsRng,
+    round1::{
+        SigningCommitments,
+        SigningNonces,
+        commit,
+    },
+    round2::{
+        SignatureShare,
+        sign,
+    },
+};
+use rkyv::{
+    Archived,
+    access,
+    deserialize,
+    rancor::Error as RkyvError,
+};
 
-use rkyv::rancor::Error as RkyvError;
-use rkyv::{Archived, access, deserialize};
+use crate::{
+    messages::error::Error,
+    protocols::{
+        algorithm::Algorithm,
+        codec::{
+            decode_wire,
+            encode_wire,
+        },
+        frost::{
+            stored_key::FrostStoredKey,
+            wire::FrostWire,
+        },
+        signing::SigningProtocol,
+        types::{
+            ProtocolInit,
+            Round,
+            RoundMessage,
+            Signature,
+        },
+    },
+};
 
-use crate::messages::error::Error;
-use crate::protocols::algorithm::Algorithm;
-use crate::protocols::codec::{decode_wire, encode_wire};
-use crate::protocols::frost::stored_key::FrostStoredKey;
-use crate::protocols::frost::wire::FrostWire;
-use crate::protocols::signing::SigningProtocol;
-use crate::protocols::types::{ProtocolInit, Round, RoundMessage, Signature};
-
-/// Participant-side FROST(secp256k1) protocol instance.
-pub struct FrostSchnorrSecp256k1Protocol {
-    /// Number of participants required to sign.
+/// Participant-side FROST(Ed25519) protocol instance.
+pub struct FrostEd25519Protocol {
+    /// Threshold and participant count.
     pub threshold: u32,
     /// Total number of participants.
     pub participants: u32,
     /// Current protocol round.
     pub round: Round,
-    /// Message to be signed.
+    /// Bytes to sign.
     pub message: Vec<u8>,
-    /// Participant's KeyPackage.
+    /// Participant key package.
     pub key_package: KeyPackage,
-    /// Participant's FROST Identifier.
+    /// Participant identifier.
     pub identifier: Identifier,
-    /// Participant's identifier as u32.
+    /// Canonical u32 identifier (from Vault).
     pub identifier_u32: u32,
-    /// Nonces generated in round 1.
+    /// Nonces generated at round 0 (commitments).
     pub nonces: Option<SigningNonces>,
-    /// Participant's signature share.
+    /// Signature share after signing.
     pub signature_share: Option<SignatureShare>,
-    /// Indicates if the protocol has been aborted.
+    /// Whether the protocol has been aborted.
     pub aborted: bool,
 }
 
-impl FrostSchnorrSecp256k1Protocol {
-    /// Try to create a new FROST(secp256k1) protocol instance.
+impl FrostEd25519Protocol {
+    /// Instantiate from engine-provided init context.
     ///
     /// # Arguments
     /// * `init` (`ProtocolInit`) - Protocol initialization context.
     ///
     /// # Errors
-    /// * `Error::UnsupportedAlgorithm` if the algorithm is not
-    ///   FROST(secp256k1).
-    /// * `Error::InvalidKeyShare` if the key share cannot be decoded.
+    /// - `Error::UnsupportedAlgorithm` if algorithm is not FrostEd25519.
+    /// - `Error::InvalidKeyShare` if stored key cannot be decoded.
     ///
     /// # Returns
-    /// * `FrostSchnorrSecp256k1Protocol` - Initialized protocol instance.
+    /// * `FrostEd25519Protocol` - New protocol instance.
     pub fn try_new(init: ProtocolInit) -> Result<Self, Error> {
-        if init.algorithm != Algorithm::FrostSchnorrSecp256k1 {
+        if init.algorithm != Algorithm::FrostEd25519 {
             return Err(Error::UnsupportedAlgorithm(
                 init.algorithm.as_str().into(),
             ));
         }
 
-        // Decode stored key from Vault blob (rkyv).
+        // Decode FrostStoredKey from Secret<Vec<u8>> using
+        // rkyv high-level API.
         let stored: FrostStoredKey =
             init.key_share.with_ref(|bytes: &Vec<u8>| {
-                let archived = access::<Archived<FrostStoredKey>, RkyvError>(
-                    bytes.as_slice(),
-                )
-                .map_err(|_| Error::InvalidKeyShare)?;
-                deserialize::<FrostStoredKey, RkyvError>(archived)
-                    .map_err(|_| Error::InvalidKeyShare)
+                match deserialize::<FrostStoredKey, RkyvError>(
+                    match access::<Archived<FrostStoredKey>, RkyvError>(
+                        bytes.as_slice(),
+                    ) {
+                        Ok(archived) => archived,
+                        Err(_) => return Err(Error::InvalidKeyShare),
+                    },
+                ) {
+                    Ok(deserialized) => Ok(deserialized),
+                    Err(_) => Err(Error::InvalidKeyShare),
+                }
             })?;
 
-        // Decode KeyPackage from postcard bytes.
+        // Decode the frost KeyPackage from opaque bytes (postcard).
         let key_package: KeyPackage =
-            postcard::from_bytes(&stored.key_package)
-                .map_err(|_| Error::InvalidKeyShare)?;
+            match postcard::from_bytes(&stored.key_package) {
+                Ok(key_package) => key_package,
+                Err(_) => return Err(Error::InvalidKeyShare),
+            };
 
         let identifier: Identifier = Identifier::try_from(
             u16::try_from(stored.identifier)
@@ -98,13 +132,13 @@ impl FrostSchnorrSecp256k1Protocol {
     }
 }
 
-impl SigningProtocol for FrostSchnorrSecp256k1Protocol {
+impl SigningProtocol for FrostEd25519Protocol {
     /// Return the algorithm identifier.
     ///
     /// # Returns
     /// * `Algorithm` - Algorithm enum variant.
     fn algorithm(&self) -> Algorithm {
-        Algorithm::FrostSchnorrSecp256k1
+        Algorithm::FrostEd25519
     }
 
     /// Return the protocol threshold.
@@ -131,32 +165,38 @@ impl SigningProtocol for FrostSchnorrSecp256k1Protocol {
         self.round
     }
 
-    /// Proceed to the next protocol round.
+    /// Advance the protocol without receiving a message.
+    ///
+    /// At round 0, it generate nonces and commitments, keep nonces locally
+    /// and finally send commitments to orchestrator.
     ///
     /// # Errors
-    /// * `Error::Aborted` if the protocol has been aborted.
-    /// * `Error::InvalidMessage` if message encoding fails.
+    /// Returns `Error::Aborted` if the protocol has been aborted.
     ///
     /// # Returns
-    /// * `Option<RoundMessage>` - Message to send to orchestrator, if any.
+    /// * `Option<RoundMessage>` - Outgoing message for the round, if any.
     fn next_round(&mut self) -> Result<Option<RoundMessage>, Error> {
         if self.aborted {
             return Err(Error::Aborted);
         }
 
         match self.round {
+            // Round 0: generate nonces and commitments.
             0 => {
                 let mut random: OsRng = OsRng;
                 let (nonces, commitments): (
                     SigningNonces,
                     SigningCommitments,
                 ) = commit(self.key_package.signing_share(), &mut random);
+
                 self.nonces = Some(nonces);
                 self.round = 1;
 
                 let commitments_bytes: Vec<u8> =
-                    postcard::to_allocvec(&commitments)
-                        .map_err(|_| Error::InvalidMessage)?;
+                    match postcard::to_allocvec(&commitments) {
+                        Ok(bytes) => bytes,
+                        Err(_) => return Err(Error::InvalidMessage),
+                    };
 
                 let wire: FrostWire = FrostWire::Commitments {
                     identifier: self.identifier_u32,
@@ -170,24 +210,28 @@ impl SigningProtocol for FrostSchnorrSecp256k1Protocol {
                     to: None,
                     payload,
                 }))
-            }
+            },
+            // Other rounds: no-operation.
             _ => Ok(None),
         }
     }
 
     /// Handle an incoming message from the orchestrator.
+    /// Round 1 input: SigningPackage (bytes).
+    /// Round 1 output: SignatureShare (bytes).
     ///
     /// # Arguments
-    /// * `message` (`RoundMessage`) - Incoming message to process.
+    /// * `message` (`RoundMessage`) - Incoming message.
     ///
     /// # Errors
-    /// * `Error::Aborted` if the protocol has been aborted.
-    /// * `Error::InvalidRound` if the message round is unexpected.
-    /// * `Error::InvalidMessage` if message decoding fails.
-    /// * `Error::FailedToSign` if signing fails.
+    /// - `Error::Aborted` if the protocol has been aborted.
+    /// - `Error::InvalidRound` if the message round does not match expected
+    ///   round.
+    /// - `Error::InvalidMessage` if message decoding or content is invalid.
+    /// - `Error::InvalidState` if protocol state is inconsistent.
     ///
     /// # Returns
-    /// * `Option<RoundMessage>` - Message to send to orchestrator, if any.
+    /// * `Option<RoundMessage>` - Outgoing message for the round, if any.
     fn handle_message(
         &mut self,
         message: RoundMessage,
@@ -195,6 +239,7 @@ impl SigningProtocol for FrostSchnorrSecp256k1Protocol {
         if self.aborted {
             return Err(Error::Aborted);
         }
+
         if message.round != 1 {
             return Err(Error::InvalidRound(message.round));
         }
@@ -222,15 +267,18 @@ impl SigningProtocol for FrostSchnorrSecp256k1Protocol {
                 }
 
                 let signature_share: SignatureShare =
-                    sign(&signing_package, &nonces, &self.key_package)
-                        .map_err(|_| Error::FailedToSign)?;
+                    match sign(&signing_package, &nonces, &self.key_package) {
+                        Ok(share) => share,
+                        Err(_) => return Err(Error::FailedToSign),
+                    };
 
                 self.signature_share = Some(signature_share);
 
-                let signature_bytes: Vec<u8> = postcard::to_allocvec(
-                    self.signature_share.as_ref().unwrap(),
-                )
-                .map_err(|_| Error::InvalidMessage)?;
+                let signature_bytes: Vec<u8> =
+                    match postcard::to_allocvec(&signature_share) {
+                        Ok(bytes) => bytes,
+                        Err(_) => return Err(Error::InvalidMessage),
+                    };
 
                 let output: FrostWire = FrostWire::SignatureShare {
                     identifier: self.identifier_u32,
@@ -244,20 +292,21 @@ impl SigningProtocol for FrostSchnorrSecp256k1Protocol {
                     to: None,
                     payload,
                 }))
-            }
+            },
             _ => Err(Error::InvalidMessage),
         }
     }
 
-    /// Finalize the protocol and produce the signature share.
+    /// Finalize and return protocol-dependent output.
+    /// For Frost participant, this returns serialized SignatureShare bytes.
     ///
     /// # Errors
-    /// * `Error::Aborted` if the protocol has been aborted.
-    /// * `Error::InvalidSignature` if the signature share is missing.
-    /// * `Error::InvalidMessage` if serialization fails.
+    /// - `Error::Aborted` if the protocol has been aborted.
+    /// - `Error::InvalidState` if the protocol is in an invalid state.
+    /// - `Error::InvalidMessage` if serialization fails.
     ///
     /// # Returns
-    /// * `Signature` - Final signature share.
+    /// * `Signature` - Final protocol output.
     fn finalize(self: Box<Self>) -> Result<Signature, Error> {
         if self.aborted {
             return Err(Error::Aborted);
@@ -265,16 +314,18 @@ impl SigningProtocol for FrostSchnorrSecp256k1Protocol {
 
         let share: SignatureShare =
             self.signature_share.ok_or(Error::InvalidSignature)?;
-        let bytes: Vec<u8> = postcard::to_allocvec(&share)
-            .map_err(|_| Error::InvalidMessage)?;
 
+        let bytes: Vec<u8> = match postcard::to_allocvec(&share) {
+            Ok(bytes) => bytes,
+            Err(_) => return Err(Error::InvalidMessage),
+        };
         Ok(Signature::Raw(bytes))
     }
 
-    /// Abort the protocol execution.
+    /// Abort the protocol, cleaning up sensitive state.
     ///
     /// # Returns
-    /// * `()` - Nothing.
+    /// `()` - Nothing.
     fn abort(&mut self) {
         self.aborted = true;
         self.nonces = None;

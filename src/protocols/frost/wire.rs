@@ -3,11 +3,7 @@
 // This causes unavoidable `missing_docs` false positives.
 #![allow(missing_docs)]
 
-use rkyv::{
-    Archive,
-    Deserialize,
-    Serialize,
-};
+use rkyv::{Archive, Deserialize, Serialize};
 
 /// Wire messages exchanged between orchestrator and peer
 /// for any FROST-based protocol.

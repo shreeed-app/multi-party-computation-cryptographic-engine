@@ -2,10 +2,7 @@
 
 use tonic::{
     Request,
-    metadata::{
-        Ascii,
-        MetadataValue,
-    },
+    metadata::{Ascii, MetadataValue},
 };
 
 use crate::messages::error::Error;

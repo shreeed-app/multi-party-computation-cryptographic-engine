@@ -13,7 +13,7 @@ match_block_trailing_comma = true
 reorder_imports = true
 group_imports = "StdExternalCrate"
 imports_granularity = "Crate"
-imports_layout = "Vertical"
+imports_layout = "HorizontalVertical"
 
 brace_style = "SameLineWhere"
 control_brace_style = "AlwaysSameLine"

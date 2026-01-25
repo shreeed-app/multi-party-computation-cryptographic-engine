@@ -1,33 +1,19 @@
 //! CGGMP24 protocol worker implementation.
 
-use std::thread::{
-    spawn,
-    yield_now,
-};
+use std::thread::{spawn, yield_now};
 
 use cggmp24::{
     ExecutionId,
     generic_ec::curves::Secp256k1,
     key_share::KeyShare,
-    signing::{
-        DataToSign,
-        Signature,
-        msg::Msg,
-    },
+    signing::{DataToSign, Signature, msg::Msg},
 };
-use crossbeam_channel::{
-    Receiver,
-    SendError,
-    Sender,
-};
+use crossbeam_channel::{Receiver, SendError, Sender};
 use rand_core::OsRng;
 use round_based::{
     Incoming,
     Outgoing,
-    state_machine::{
-        ProceedResult,
-        StateMachine,
-    },
+    state_machine::{ProceedResult, StateMachine},
 };
 use sha2::Sha256;
 

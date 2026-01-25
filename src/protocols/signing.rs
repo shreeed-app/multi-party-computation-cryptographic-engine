@@ -4,11 +4,7 @@ use crate::{
     messages::error::Error,
     protocols::{
         algorithm::Algorithm,
-        types::{
-            Round,
-            RoundMessage,
-            Signature,
-        },
+        types::{Round, RoundMessage, Signature},
     },
 };
 

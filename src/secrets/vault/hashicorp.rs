@@ -1,17 +1,10 @@
 //! HashiCorp Vault provider (KV v2).
 
 use async_trait::async_trait;
-use base64::{
-    Engine as _,
-    engine::general_purpose,
-};
+use base64::{Engine as _, engine::general_purpose};
 use serde_json::Value;
 use vaultrs::{
-    client::{
-        VaultClient,
-        VaultClientSettings,
-        VaultClientSettingsBuilder,
-    },
+    client::{VaultClient, VaultClientSettings, VaultClientSettingsBuilder},
     kv2,
 };
 
@@ -20,10 +13,7 @@ use crate::{
     messages::error::Error,
     secrets::{
         secret::Secret,
-        vault::{
-            api::VaultProvider,
-            config::VaultConfig,
-        },
+        vault::{api::VaultProvider, config::VaultConfig},
     },
 };
 

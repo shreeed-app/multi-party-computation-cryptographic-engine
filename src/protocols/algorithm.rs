@@ -1,13 +1,7 @@
 //! Supported signing algorithms.
 
-use serde::{
-    Deserialize,
-    Serialize,
-};
-use strum_macros::{
-    AsRefStr,
-    EnumString,
-};
+use serde::{Deserialize, Serialize};
+use strum_macros::{AsRefStr, EnumString};
 
 /// Supported signing algorithms.
 #[derive(

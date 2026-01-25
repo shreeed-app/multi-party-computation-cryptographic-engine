@@ -1,9 +1,6 @@
 //! gRPC error conversions.
 
-use tonic::{
-    Code,
-    Status,
-};
+use tonic::{Code, Status};
 
 use crate::messages::error::Error;
 

@@ -1,38 +1,18 @@
-use std::collections::{
-    BTreeMap,
-    HashMap,
-};
+use std::collections::{BTreeMap, HashMap};
 
 use mpc_signer_engine::{
     auth::session::identifier::SessionId,
-    engine::{
-        api::EngineApi,
-        builder::EngineBuilder,
-        core::Engine,
-    },
+    engine::{api::EngineApi, builder::EngineBuilder, core::Engine},
     messages::error::Error,
     protocols::{
         algorithm::Algorithm,
-        frost::{
-            stored_key::FrostStoredKey,
-            wire::FrostWire,
-        },
-        types::{
-            ProtocolInit,
-            RoundMessage,
-        },
+        frost::{stored_key::FrostStoredKey, wire::FrostWire},
+        types::{ProtocolInit, RoundMessage},
     },
     secrets::secret::Secret,
 };
-use rand_core::{
-    OsRng,
-    RngCore,
-};
-use rkyv::{
-    from_bytes,
-    rancor::Error as RkyvError,
-    to_bytes,
-};
+use rand_core::{OsRng, RngCore};
+use rkyv::{from_bytes, rancor::Error as RkyvError, to_bytes};
 
 /// Overall test setup configuration.
 struct TestSetup {

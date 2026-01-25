@@ -1,8 +1,5 @@
 //! Tests for session state machine.
-use crate::{
-    auth::session::state::SessionState,
-    messages::error::Error,
-};
+use crate::{auth::session::state::SessionState, messages::error::Error};
 
 /// Tests that the state machine enforces round order correctly.
 ///

@@ -1,25 +1,12 @@
-use std::{
-    net::SocketAddr,
-    time::Duration,
-};
+use std::{net::SocketAddr, time::Duration};
 
 use mpc_signer_engine::{
-    auth::ipc::{
-        auth::TokenAuth,
-        config::IpcConfig,
-        server::IpcServer,
-    },
+    auth::ipc::{auth::TokenAuth, config::IpcConfig, server::IpcServer},
     config::EnvConfig,
-    engine::{
-        builder::EngineBuilder,
-        core::Engine,
-    },
+    engine::{builder::EngineBuilder, core::Engine},
     messages::error::Error,
     proto::signer::v1::signer_server::SignerServer,
-    secrets::vault::{
-        config::VaultConfig,
-        hashicorp::HashicorpVaultProvider,
-    },
+    secrets::vault::{config::VaultConfig, hashicorp::HashicorpVaultProvider},
 };
 use tonic::transport::Server;
 

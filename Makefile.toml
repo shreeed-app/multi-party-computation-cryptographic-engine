@@ -28,7 +28,6 @@ args = ["test", "--all-features"]
 description = "Check code formatting."
 category = "Development"
 command = "cargo"
-env = { RUSTUP_TOOLCHAIN = "nightly" }
 args = ["fmt", "--all", "--", "--check"]
 
 [tasks.fmt]

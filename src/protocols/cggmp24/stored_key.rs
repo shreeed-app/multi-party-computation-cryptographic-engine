@@ -1,10 +1,6 @@
 //! CGGMP'24 stored key representation.
 
-use rkyv::{
-    Archive,
-    Deserialize,
-    Serialize,
-};
+use rkyv::{Archive, Deserialize, Serialize};
 
 /// Stored in Vault for any CGGMP'24 participant.
 #[derive(Debug, PartialEq, Archive, Serialize, Deserialize)]

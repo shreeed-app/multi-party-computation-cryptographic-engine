@@ -6,15 +6,8 @@ use rkyv::{
     Serialize,
     bytecheck::CheckBytes,
     from_bytes,
-    rancor::{
-        Error as RkyvError,
-        Strategy,
-    },
-    ser::{
-        Serializer,
-        allocator::ArenaHandle,
-        sharing::Share,
-    },
+    rancor::{Error as RkyvError, Strategy},
+    ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     to_bytes,
     util::AlignedVec,
     validation::{

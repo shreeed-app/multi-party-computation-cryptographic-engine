@@ -1,23 +1,13 @@
 //! IPC server for the signing engine.
 
-use std::{
-    str::FromStr,
-    sync::Arc,
-};
+use std::{str::FromStr, sync::Arc};
 
 use futures::executor::block_on;
 use tokio::task::spawn_blocking;
-use tonic::{
-    Request,
-    Response,
-    Status,
-};
+use tonic::{Request, Response, Status};
 
 use crate::{
-    auth::{
-        ipc::auth::AuthProvider,
-        session::identifier::SessionId,
-    },
+    auth::{ipc::auth::AuthProvider, session::identifier::SessionId},
     engine::api::EngineApi,
     messages::error::Error,
     proto::signer::v1::{
@@ -35,16 +25,9 @@ use crate::{
     },
     protocols::{
         algorithm::Algorithm,
-        types::{
-            ProtocolInit,
-            RoundMessage,
-            Signature,
-        },
+        types::{ProtocolInit, RoundMessage, Signature},
     },
-    secrets::{
-        types::KeyShare,
-        vault::api::VaultProvider,
-    },
+    secrets::{types::KeyShare, vault::api::VaultProvider},
 };
 
 /// gRPC IPC server exposing the signing engine.

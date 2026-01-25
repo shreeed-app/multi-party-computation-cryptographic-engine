@@ -2,10 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::{
-    messages::error::Error,
-    secrets::types::KeyShare,
-};
+use crate::{messages::error::Error, secrets::types::KeyShare};
 
 /// Vault abstraction for retrieving key shares.
 #[async_trait]

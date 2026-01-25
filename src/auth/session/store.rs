@@ -2,21 +2,12 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        RwLock,
-        RwLockWriteGuard,
-    },
-    time::{
-        Duration,
-        Instant,
-    },
+    sync::{RwLock, RwLockWriteGuard},
+    time::{Duration, Instant},
 };
 
 use crate::{
-    auth::session::{
-        identifier::SessionId,
-        state::SessionState,
-    },
+    auth::session::{identifier::SessionId, state::SessionState},
     messages::error::Error,
 };
 

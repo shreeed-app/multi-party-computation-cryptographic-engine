@@ -2,12 +2,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Mutex,
-        MutexGuard,
-        RwLock,
-        RwLockWriteGuard,
-    },
+    sync::{Mutex, MutexGuard, RwLock, RwLockWriteGuard},
     time::Duration,
 };
 
@@ -17,19 +12,12 @@ use crate::{
         state::SessionState,
         store::SessionStore,
     },
-    engine::{
-        api::EngineApi,
-        entry::SessionEntry,
-    },
+    engine::{api::EngineApi, entry::SessionEntry},
     messages::error::Error,
     protocols::{
         factory::ProtocolFactory,
         signing::SigningProtocol,
-        types::{
-            ProtocolInit,
-            RoundMessage,
-            Signature,
-        },
+        types::{ProtocolInit, RoundMessage, Signature},
     },
 };
 

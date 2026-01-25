@@ -2,30 +2,13 @@
 
 use cggmp24::{
     DataToSign,
-    generic_ec::{
-        NonZero,
-        Point,
-        curves::Secp256k1 as CggmpSecp256k1,
-    },
+    generic_ec::{NonZero, Point, curves::Secp256k1 as CggmpSecp256k1},
     key_share::KeyShare,
     signing::msg::Msg,
 };
-use crossbeam_channel::{
-    self as cb,
-    Receiver,
-    Sender,
-};
-use k256::ecdsa::{
-    RecoveryId,
-    Signature as K256Signature,
-    VerifyingKey,
-};
-use rkyv::{
-    Archived,
-    access,
-    deserialize,
-    rancor::Error as RkyvError,
-};
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
+use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey};
+use rkyv::{Archived, access, deserialize, rancor::Error as RkyvError};
 use round_based::{
     Incoming,
     MessageDestination,
@@ -33,42 +16,21 @@ use round_based::{
     MsgId,
     Outgoing,
 };
-use serde_json::{
-    from_slice,
-    to_vec,
-};
-use sha2::{
-    Digest,
-    Sha256,
-};
+use serde_json::{from_slice, to_vec};
+use sha2::{Digest, Sha256};
 
 use crate::{
     messages::error::Error,
     protocols::{
         algorithm::Algorithm,
         cggmp24::{
-            stored_key::{
-                ArchivedCggmp24StoredKey,
-                Cggmp24StoredKey,
-            },
+            stored_key::{ArchivedCggmp24StoredKey, Cggmp24StoredKey},
             wire::Cggmp24Wire,
-            worker::{
-                CggmpMessage,
-                WorkerDone,
-                spawn_worker,
-            },
+            worker::{CggmpMessage, WorkerDone, spawn_worker},
         },
-        codec::{
-            decode_wire,
-            encode_wire,
-        },
+        codec::{decode_wire, encode_wire},
         signing::SigningProtocol,
-        types::{
-            ProtocolInit,
-            Round,
-            RoundMessage,
-            Signature,
-        },
+        types::{ProtocolInit, Round, RoundMessage, Signature},
     },
 };
 
@@ -85,11 +47,11 @@ pub struct Cggmp24EcdsaSecp256k1Protocol {
     /// Public key bytes.
     public_key_bytes: Vec<u8>,
     /// Channel to send incoming messages to the worker.
-    incoming_transmitter: cb::Sender<Incoming<CggmpMessage>>,
+    incoming_transmitter: Sender<Incoming<CggmpMessage>>,
     /// Channel to receive outgoing messages from the worker.
-    outgoing_receiver: cb::Receiver<round_based::Outgoing<CggmpMessage>>,
+    outgoing_receiver: Receiver<round_based::Outgoing<CggmpMessage>>,
     /// Channel to receive worker completion notifications.
-    done_receiver: cb::Receiver<WorkerDone>,
+    done_receiver: Receiver<WorkerDone>,
     /// Message identifier counter used to populate `RoundMessage.round`.
     /// Important: `round_based::MsgId` is not cryptographically meaningful
     /// in CGGMP24. It is only used to ensure a monotonic message identifier
@@ -177,7 +139,7 @@ impl Cggmp24EcdsaSecp256k1Protocol {
         //     selected, distributing load and exposure.
 
         // Hash the global key identifier to derive a
-        //deterministic starting index.
+        // deterministic starting index.
         let mut hasher: Sha256 = Sha256::new();
         hasher.update(init.key_id.as_bytes());
         let digest = hasher.finalize();
@@ -228,15 +190,15 @@ impl Cggmp24EcdsaSecp256k1Protocol {
         let (incoming_transmitter, incoming_receiver): (
             Sender<Incoming<CggmpMessage>>,
             Receiver<Incoming<CggmpMessage>>,
-        ) = cb::unbounded();
+        ) = unbounded();
         let (outgoing_transmitter, outgoing_receiver): (
             Sender<round_based::Outgoing<CggmpMessage>>,
             Receiver<round_based::Outgoing<CggmpMessage>>,
-        ) = cb::unbounded();
+        ) = unbounded();
         let (done_transmitter, done_receiver): (
             Sender<WorkerDone>,
             Receiver<WorkerDone>,
-        ) = cb::bounded(1);
+        ) = bounded(1);
 
         // Spawn the worker thread.
         spawn_worker(

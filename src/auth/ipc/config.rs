@@ -1,10 +1,6 @@
 //! IPC runtime configuration.
 
-use config::{
-    Config,
-    ConfigError,
-    File,
-};
+use config::{Config, ConfigError, File};
 use serde::Deserialize;
 
 /// IPC runtime configuration.

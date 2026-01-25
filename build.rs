@@ -1,7 +1,4 @@
-use std::{
-    error::Error,
-    path::Path,
-};
+use std::{error::Error, path::Path};
 
 use tonic_prost_build::configure;
 

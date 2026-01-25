@@ -3,11 +3,7 @@
 use crate::{
     auth::session::identifier::SessionId,
     messages::error::Error,
-    protocols::types::{
-        ProtocolInit,
-        RoundMessage,
-        Signature,
-    },
+    protocols::types::{ProtocolInit, RoundMessage, Signature},
 };
 
 /// Public engine interface exposed to the IPC layer.

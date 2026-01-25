@@ -1,16 +1,9 @@
 //! Tests for the authentication module.
-use rand::{
-    Rng,
-    distr::Alphanumeric,
-    prelude::ThreadRng,
-};
+use rand::{Rng, distr::Alphanumeric, prelude::ThreadRng};
 use tonic::Request;
 
 use crate::{
-    auth::ipc::auth::{
-        AuthProvider,
-        TokenAuth,
-    },
+    auth::ipc::auth::{AuthProvider, TokenAuth},
     messages::error::Error,
 };
 

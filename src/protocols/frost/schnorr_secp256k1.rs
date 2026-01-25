@@ -5,42 +5,19 @@ use frost_secp256k1::{
     SigningPackage,
     keys::KeyPackage,
     rand_core::OsRng,
-    round1::{
-        SigningCommitments,
-        SigningNonces,
-        commit,
-    },
-    round2::{
-        SignatureShare,
-        sign,
-    },
+    round1::{SigningCommitments, SigningNonces, commit},
+    round2::{SignatureShare, sign},
 };
-use rkyv::{
-    Archived,
-    access,
-    deserialize,
-    rancor::Error as RkyvError,
-};
+use rkyv::{Archived, access, deserialize, rancor::Error as RkyvError};
 
 use crate::{
     messages::error::Error,
     protocols::{
         algorithm::Algorithm,
-        codec::{
-            decode_wire,
-            encode_wire,
-        },
-        frost::{
-            stored_key::FrostStoredKey,
-            wire::FrostWire,
-        },
+        codec::{decode_wire, encode_wire},
+        frost::{stored_key::FrostStoredKey, wire::FrostWire},
         signing::SigningProtocol,
-        types::{
-            ProtocolInit,
-            Round,
-            RoundMessage,
-            Signature,
-        },
+        types::{ProtocolInit, Round, RoundMessage, Signature},
     },
 };
 

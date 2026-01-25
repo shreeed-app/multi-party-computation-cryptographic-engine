@@ -1,14 +1,8 @@
 //! Tests for the session store.
-use std::{
-    thread::sleep,
-    time::Duration,
-};
+use std::{thread::sleep, time::Duration};
 
 use crate::{
-    auth::session::{
-        identifier::SessionId,
-        store::SessionStore,
-    },
+    auth::session::{identifier::SessionId, store::SessionStore},
     messages::error::Error,
 };
 

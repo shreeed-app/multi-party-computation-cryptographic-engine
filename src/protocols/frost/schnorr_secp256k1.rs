@@ -1,8 +1,7 @@
 //! Frost-secp256k1 (Schnorr) participant-side protocol implementation.
 
 use frost_secp256k1::{
-    Identifier,
-    SigningPackage,
+    Identifier, SigningPackage,
     keys::KeyPackage,
     rand_core::OsRng,
     round1::{SigningCommitments, SigningNonces, commit},
@@ -231,10 +230,14 @@ impl SigningProtocol for FrostSchnorrSecp256k1Protocol {
 
                 self.signature_share = Some(signature_share);
 
-                let signature_bytes: Vec<u8> = postcard::to_allocvec(
-                    self.signature_share.as_ref().unwrap(),
-                )
-                .map_err(|_| Error::InvalidMessage)?;
+                let signature_share = self
+                    .signature_share
+                    .as_ref()
+                    .ok_or(Error::InvalidSignature)?;
+
+                let signature_bytes: Vec<u8> =
+                    postcard::to_allocvec(signature_share)
+                        .map_err(|_| Error::InvalidMessage)?;
 
                 let output: FrostWire = FrostWire::SignatureShare {
                     identifier: self.identifier_u32,

@@ -55,15 +55,9 @@ macro_rules! define_frost_suite {
     ) => {
         mod $mod_name {
             use frost_impl::{
-                Identifier,
-                Signature,
-                SigningPackage,
-                aggregate,
+                Identifier, Signature, SigningPackage, aggregate,
                 keys::{
-                    IdentifierList,
-                    KeyPackage,
-                    PublicKeyPackage,
-                    SecretShare,
+                    IdentifierList, KeyPackage, PublicKeyPackage, SecretShare,
                     generate_with_dealer,
                 },
                 round1::SigningCommitments,
@@ -107,7 +101,11 @@ macro_rules! define_frost_suite {
                     let identifier: Identifier =
                         Identifier::try_from(identifier_u16)
                             .map_err(|_| Error::InvalidKeyShare)?;
-                    let share: &SecretShare = shares.get(&identifier).unwrap();
+
+                    let share: &SecretShare = shares.get(&identifier).expect(
+                        "Generated shares should contain all identifiers.",
+                    );
+
                     let key_package: KeyPackage =
                         KeyPackage::try_from(share.clone())
                             .map_err(|_| Error::InvalidKeyShare)?;
@@ -365,7 +363,7 @@ macro_rules! define_frost_suite {
                 let (package, shares): (
                     SigningPackage,
                     BTreeMap<Identifier, SignatureShare>,
-                ) = sign(&participants).unwrap();
+                ) = sign(&participants).expect("Signing failed.");
 
                 let bad_package: SigningPackage = SigningPackage::new(
                     package.signing_commitments().clone(),

@@ -144,6 +144,11 @@ description = "Full CI quality check pipeline."
 category = "CI"
 dependencies = ["fmt-check", "check", "lint", "test", "deny", "audit"]
 
+[tasks.ci-apply]
+description = "Full CI quality check pipeline with automatic fixes."
+category = "CI"
+dependencies = ["fmt", "check", "lint", "test", "deny", "audit"]
+
 [tasks.miri]
 description = "Run Miri."
 category = "Development"

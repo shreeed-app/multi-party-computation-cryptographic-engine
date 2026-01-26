@@ -1,5 +1,8 @@
 [toolchain]
-channel = "stable"
+# Note: nightly channel is used for continuous integration due to missing
+# features in rustfmt on stable channel. Features from nightly are not
+# used in the codebase itself.
+channel = "nightly"
 components = ["clippy", "rustfmt", "llvm-tools-preview"]
 targets = ["x86_64-unknown-linux-musl"]
 profile = "minimal"

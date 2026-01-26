@@ -31,8 +31,8 @@ pub struct EnvConfig {
 }
 
 /// Static lazy-loaded environment configuration.
-pub static CONFIG: Lazy<Result<EnvConfig, Error>> =
-    Lazy::new(|| Figment::new().merge(Env::raw()).extract());
+static CONFIG: Lazy<Result<EnvConfig, Box<Error>>> =
+    Lazy::new(|| Figment::new().merge(Env::raw()).extract().map_err(Box::new));
 
 impl EnvConfig {
     /// Load configuration from environment variables.
@@ -43,6 +43,9 @@ impl EnvConfig {
     /// # Returns
     /// * `&'static EnvConfig` - Loaded environment configuration.
     pub fn load() -> Result<&'static EnvConfig, &'static Error> {
-        CONFIG.as_ref()
+        match &*CONFIG {
+            Ok(config) => Ok(config),
+            Err(error) => Err(error.as_ref()),
+        }
     }
 }

@@ -1,7 +1,8 @@
 //! Frost-secp256k1 (Schnorr) participant-side protocol implementation.
 
 use frost_secp256k1::{
-    Identifier, SigningPackage,
+    Identifier,
+    SigningPackage,
     keys::KeyPackage,
     rand_core::OsRng,
     round1::{SigningCommitments, SigningNonces, commit},

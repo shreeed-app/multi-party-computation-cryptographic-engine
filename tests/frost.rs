@@ -55,9 +55,15 @@ macro_rules! define_frost_suite {
     ) => {
         mod $mod_name {
             use frost_impl::{
-                Identifier, Signature, SigningPackage, aggregate,
+                Identifier,
+                Signature,
+                SigningPackage,
+                aggregate,
                 keys::{
-                    IdentifierList, KeyPackage, PublicKeyPackage, SecretShare,
+                    IdentifierList,
+                    KeyPackage,
+                    PublicKeyPackage,
+                    SecretShare,
                     generate_with_dealer,
                 },
                 round1::SigningCommitments,

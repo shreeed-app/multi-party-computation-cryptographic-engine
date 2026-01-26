@@ -28,42 +28,46 @@ pub enum WorkerDone {
     Err,
 }
 
+/// CGGMP24 ECDSA Secp256k1 protocol worker.
+pub struct Worker {
+    /// Key share of the participant.
+    pub key_share: KeyShare<Secp256k1>,
+    /// List of participant identifiers.
+    pub parties: Vec<u16>,
+    /// Identifier of the current participant.
+    pub identifier: u16,
+    /// Data to be signed.
+    pub data_to_sign: DataToSign<Secp256k1>,
+    /// Execution identifier as bytes.
+    pub execution_id_bytes: Vec<u8>,
+    /// Channel to receive incoming messages.
+    pub incoming_receiver: Receiver<Incoming<CggmpMessage>>,
+    /// Channel to send outgoing messages.
+    pub outgoing_transmitter: Sender<Outgoing<CggmpMessage>>,
+    /// Channel to notify when the worker is done.
+    pub done_transmitter: Sender<WorkerDone>,
+}
+
 /// Spawns a worker thread to execute CGGMP24 ECDSA Secp256k1 protocol.
 ///
 /// # Arguments
-/// * `key_share` (`KeyShare<CggmpSecp256k1>`) - The key share of the
-///   participant.
-/// * `parties` (`Vec<u16>`) - List of participant identifiers.
-/// * `identifier` (`u16`) - Identifier of the current participant.
-/// * `data_to_sign` (`DataToSign<CggmpSecp256k1>`) - The data to be signed.
-/// * `execution_id_bytes` (`Vec<u8>`) - Execution identifier as bytes.
-/// * `incoming_receiver` (`Receiver<Incoming<CggmpMessage>>`) - Channel to
-///   receive incoming messages.
-/// * `outgoing_transmitter` (`Sender<Outgoing<CggmpMessage>>`) - Channel to
-///   send outgoing messages.
-/// * `done_transmitter` (`Sender<WorkerDone>`) - Channel to notify when the
-///   worker is done.
-pub fn spawn_worker(
-    key_share: KeyShare<Secp256k1>,
-    parties: Vec<u16>,
-    identifier: u16,
-    data_to_sign: DataToSign<Secp256k1>,
-    execution_id_bytes: Vec<u8>,
-    incoming_receiver: Receiver<Incoming<CggmpMessage>>,
-    outgoing_transmitter: Sender<Outgoing<CggmpMessage>>,
-    done_transmitter: Sender<WorkerDone>,
-) {
+/// * `worker` - The worker instance containing protocol parameters and
+///   channels.
+pub fn spawn_worker(worker: Worker) {
     spawn(move || {
         let mut random: OsRng = OsRng;
         // Safety: `execution_id_bytes` is owned by this thread and lives
         // for the entire lifetime of the state machine.
         let execution_id: ExecutionId<'_> =
-            ExecutionId::new(&execution_id_bytes);
+            ExecutionId::new(&worker.execution_id_bytes);
 
-        let mut state_machine =
-            cggmp24::signing(execution_id, identifier, &parties, &key_share)
-                .sign_sync(&mut random, &data_to_sign);
-
+        let mut state_machine = cggmp24::signing(
+            execution_id,
+            worker.identifier,
+            &worker.parties,
+            &worker.key_share,
+        )
+        .sign_sync(&mut random, &worker.data_to_sign);
         // Important: messages delivered via `incoming_receiver` must preserve
         // the order enforced by the orchestrator. Reordering would
         // violate CGGMP24 protocol assumptions.
@@ -75,23 +79,25 @@ pub fn spawn_worker(
                     // protocol is already aborted and there is nothing
                     // meaningful to do.
                     let _: Result<(), SendError<Outgoing<CggmpMessage>>> =
-                        outgoing_transmitter.send(out);
+                        worker.outgoing_transmitter.send(out);
                 },
 
                 // Incoming message to be processed.
                 ProceedResult::NeedsOneMoreMessage => {
-                    match incoming_receiver.recv() {
+                    match worker.incoming_receiver.recv() {
                         Ok(incoming) => {
                             if state_machine.received_msg(incoming).is_err() {
                                 let _: Result<(), SendError<WorkerDone>> =
-                                    done_transmitter.send(WorkerDone::Err);
+                                    worker
+                                        .done_transmitter
+                                        .send(WorkerDone::Err);
                                 break;
                             }
                         },
                         Err(_) => {
                             // Incoming channel closed: protocol aborted.
                             let _: Result<(), SendError<WorkerDone>> =
-                                done_transmitter.send(WorkerDone::Err);
+                                worker.done_transmitter.send(WorkerDone::Err);
                             break;
                         },
                     }
@@ -104,15 +110,16 @@ pub fn spawn_worker(
 
                 // Protocol completed with resulting signature.
                 ProceedResult::Output(Ok(signature)) => {
-                    let _: Result<(), SendError<WorkerDone>> =
-                        done_transmitter.send(WorkerDone::Ok(signature));
+                    let _: Result<(), SendError<WorkerDone>> = worker
+                        .done_transmitter
+                        .send(WorkerDone::Ok(signature));
                     break;
                 },
 
                 // Protocol ended with an error.
                 ProceedResult::Output(Err(_)) | ProceedResult::Error(_) => {
                     let _: Result<(), SendError<WorkerDone>> =
-                        done_transmitter.send(WorkerDone::Err);
+                        worker.done_transmitter.send(WorkerDone::Err);
                     break;
                 },
             }

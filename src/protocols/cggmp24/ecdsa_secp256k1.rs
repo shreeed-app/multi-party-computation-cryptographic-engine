@@ -26,7 +26,7 @@ use crate::{
         cggmp24::{
             stored_key::{ArchivedCggmp24StoredKey, Cggmp24StoredKey},
             wire::Cggmp24Wire,
-            worker::{CggmpMessage, WorkerDone, spawn_worker},
+            worker::{CggmpMessage, Worker, WorkerDone, spawn_worker},
         },
         codec::{decode_wire, encode_wire},
         signing::SigningProtocol,
@@ -201,16 +201,16 @@ impl Cggmp24EcdsaSecp256k1Protocol {
         ) = bounded(1);
 
         // Spawn the worker thread.
-        spawn_worker(
+        spawn_worker(Worker {
             key_share,
             parties,
-            stored.identifier,
+            identifier: stored.identifier,
             data_to_sign,
             execution_id_bytes,
             incoming_receiver,
             outgoing_transmitter,
             done_transmitter,
-        );
+        });
 
         Ok(Self {
             threshold: init.threshold,
@@ -248,7 +248,9 @@ impl Cggmp24EcdsaSecp256k1Protocol {
 
         // Determine recipient.
         let to: Option<u32> = match outgoing.recipient {
-            MessageDestination::OneParty(p) => Some(u32::from(u16::from(p))),
+            MessageDestination::OneParty(one_party) => {
+                Some(u32::from(one_party))
+            },
             MessageDestination::AllParties => None,
         };
 
@@ -358,7 +360,7 @@ impl SigningProtocol for Cggmp24EcdsaSecp256k1Protocol {
 
         let incoming: Incoming<Msg<CggmpSecp256k1, Sha256>> = Incoming {
             id: round_message.round as MsgId,
-            sender: sender_u16.into(),
+            sender: sender_u16,
             // Message type based on presence of `to` field.
             msg_type: if round_message.to.is_some() {
                 MessageType::P2P

@@ -1,6 +1,6 @@
 //! Session state machine.
 
-use crate::messages::error::Error;
+use crate::transport::error::Error;
 
 /// This enforces valid transitions and prevents
 /// replay, double-finalization, or invalid round ordering.

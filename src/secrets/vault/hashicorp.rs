@@ -10,11 +10,12 @@ use vaultrs::{
 
 use crate::{
     config::EnvConfig,
-    messages::error::Error,
     secrets::{
         secret::Secret,
+        types::KeyShare,
         vault::{api::VaultProvider, config::VaultConfig},
     },
+    transport::error::Error,
 };
 
 /// HashiCorp Vault KVv2 provider.
@@ -98,33 +99,70 @@ impl VaultProvider for HashicorpVaultProvider {
         key_id: &str,
     ) -> Result<Secret<Vec<u8>>, Error> {
         let path: String = self.secret_path(key_id);
+        // Extract and decode the base64 share in steps: first get the string,
+        // then decode to bytes, then drop JSON value.
+        let bytes: Vec<u8> = {
+            // Get the base64 string from JSON.
+            let value: Value =
+                match kv2::read(&self.client, &self.mount, &path).await {
+                    Ok(data) => data,
+                    Err(_) => return Err(Error::KeyNotFound),
+                };
 
-        // We read JSON data from Vault KV v2, it returns a "data" object
-        // with versioning. It deserializes the "data" content.
-        let value: Value =
-            match kv2::read(&self.client, &self.mount, &path).await {
-                Ok(data) => data,
-                Err(_) => return Err(Error::KeyNotFound),
+            // Decode base64 to bytes.
+            let bytes: Vec<u8> = {
+                let share_b64: &str = value
+                    .get(&self.field)
+                    .and_then(|value: &Value| value.as_str())
+                    .ok_or(Error::InvalidKeyShare)?;
+
+                general_purpose::STANDARD
+                    .decode(share_b64.as_bytes())
+                    .map_err(|_| Error::InvalidKeyShare)?
             };
 
-        // Extract field (configurable) from JSON.
-        let share_b64: &str = match value
-            .get(&self.field)
-            .and_then(|value: &Value| value.as_str())
-        {
-            Some(share) => share,
-            None => return Err(Error::InvalidKeyShare),
+            bytes
         };
 
-        // Decode base64 to opaque bytes.
-        let bytes: Vec<u8> = match general_purpose::STANDARD
-            .decode(share_b64.as_bytes())
-            .map_err(|_| Error::InvalidKeyShare)
-        {
-            Ok(bytes) => bytes,
-            Err(error) => return Err(error),
-        };
-
+        // Put the bytes into Secret immediately.
         Ok(Secret::new(bytes))
+    }
+
+    /// Store a key share in Vault.
+    ///
+    /// # Arguments
+    /// * `key_id` (`&str`) - Key share identifier.
+    /// * `key_share` (`&KeyShare`) - Opaque key share bytes.
+    ///
+    /// # Errors
+    /// * `Error` - If storage fails.
+    ///
+    /// # Returns
+    /// * `()` - Empty result on success.
+    async fn store_key_share(
+        &self,
+        key_id: &str,
+        key_share: KeyShare,
+    ) -> Result<(), Error> {
+        let path: String = self.secret_path(key_id);
+
+        // Encode directly from reference, without cloning.
+        let share_b64: String = key_share.with_ref(|bytes: &Vec<u8>| {
+            general_purpose::STANDARD.encode(bytes)
+        });
+
+        // Prepare JSON object with field.
+        let mut data: Value = Value::Object(serde_json::Map::new());
+        if let Some(data) = data.as_object_mut() {
+            data.insert(self.field.clone(), Value::String(share_b64));
+        } else {
+            return Err(Error::VaultError);
+        }
+
+        // Store in Vault KV v2.
+        match kv2::set(&self.client, &self.mount, &path, &data).await {
+            Ok(_) => Ok(()),
+            Err(_) => Err(Error::VaultError),
+        }
     }
 }

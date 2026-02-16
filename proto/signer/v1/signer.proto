@@ -5,10 +5,14 @@ package signer.v1;
 option go_package = "signer_pb";
 option java_package = "com.signer.v1";
 
-/// Signing engine IPC service.
-service Signer {
+/// Peer engine IPC service.
+service Peer {
   /// Start a new signing session and execute round 0.
-  rpc StartSession (StartSessionRequest)
+  rpc StartSigningSession (StartSigningSessionRequest)
+  returns (StartSessionResponse);
+
+  /// Start a new key generation session and execute round 0.
+  rpc StartKeyGenerationSession (StartKeyGenerationSessionRequest)
   returns (StartSessionResponse);
 
   /// Submit a round message and receive the next round output.
@@ -24,9 +28,73 @@ service Signer {
   returns (AbortSessionResponse);
 }
 
+/// Orchestrator service for high-level operations.
+service Orchestrator {
+  /// Generate a new key.
+  rpc GenerateKey (GenerateKeyRequest)
+  returns (GenerateKeyResponse);
+
+  /// Sign a message.
+  rpc Sign (SignRequest)
+  returns (SignResponse);
+
+  /// Abort an ongoing operation.
+  rpc Abort (AbortRequest)
+  returns (AbortResponse);
+}
+
+/// Request to generate a new key.
+message GenerateKeyRequest {
+  /// Logical key identifier (stable across sessions).
+  string key_id = 1;
+  /// Algorithm identifier (e.g. "frost-ed25519").
+  string algorithm = 2;
+  /// Threshold (t).
+  uint32 threshold = 3;
+  /// Number of participants (n).
+  uint32 participants = 4;
+}
+
+/// Response containing the key generation result.
+message GenerateKeyResponse {
+  /// Key generation result.
+  KeyGenerationResult result = 1;
+}
+
+/// Request to sign a message.
+message SignRequest {
+  /// Logical key identifier (stable across sessions).
+  string key_id = 1;
+  /// Serialized protocol-specific public key package.
+  bytes public_key_package = 2;
+  /// Algorithm identifier (e.g. "frost-ed25519").
+  string algorithm = 3;
+  /// Threshold (t).
+  uint32 threshold = 4;
+  /// Number of participants (n).
+  uint32 participants = 5;
+  /// Message to sign.
+  bytes message = 6;
+}
+
+/// Response containing the signature result.
+message SignResponse {
+  /// Signature result.
+  SignatureResult result = 1;
+}
+
+/// Request to abort an ongoing operation.
+message AbortRequest {
+  /// Unique session identifier.
+  string session_id = 1;
+}
+
+/// Empty response confirming abort.
+message AbortResponse {}
+
 /// Request to start a new signing session.
-message StartSessionRequest {
-  /// Identifier of the key share.
+message StartSigningSessionRequest {
+  /// Logical key identifier (stable across sessions).
   string key_id = 1;
   /// Algorithm identifier (e.g. "frost-ed25519").
   string algorithm = 2;
@@ -36,6 +104,20 @@ message StartSessionRequest {
   uint32 participants = 4;
   /// Message to sign.
   bytes message = 5;
+}
+
+/// Request to start a new key generation session.
+message StartKeyGenerationSessionRequest {
+  /// Logical key identifier (stable across sessions).
+  string key_id = 1;
+  /// Algorithm identifier (e.g. "frost-ed25519").
+  string algorithm = 2;
+  /// Threshold (t).
+  uint32 threshold = 3;
+  /// Number of participants (n).
+  uint32 participants = 4;
+  /// Participant identifier.
+  uint32 identifier = 5;
 }
 
 /// Response containing the session ID and round 0 output.
@@ -80,8 +162,20 @@ message FinalizeSessionRequest {
   string session_id = 1;
 }
 
-/// Response containing the final signature.
+/// Response containing the final protocol output.
 message FinalizeSessionResponse {
+  /// Final protocol output.
+  oneof final_output {
+    /// Signature output (signing protocols).
+    SignatureResult signature = 1;
+
+    /// Key generation output (key generation protocols).
+    KeyGenerationResult key_generation = 2;
+  }
+}
+
+/// Final signature output.
+message SignatureResult {
   /// Signature output.
   oneof final_signature {
     /// Raw signature bytes (e.g. Ed25519, Schnorr).
@@ -89,6 +183,19 @@ message FinalizeSessionResponse {
     /// ECDSA signature.
     EcdsaSignature ecdsa = 2;
   }
+}
+
+/// Key generation output.
+message KeyGenerationResult {
+  /// Public key bytes in a canonical format.
+  ///   - secp256k1: SEC1 encoded public key (recommend compressed 33 bytes).
+  ///   - ed25519: 32-byte public key.
+  bytes public_key = 1;
+  /// Serialized protocol-specific public key package.
+  /// Required for threshold signing aggregation.
+  /// For FROST: serialized frost::keys::PublicKeyPackage (postcard encoded).
+  /// For CGGMP24: protocol-specific aggregation context.
+  bytes public_key_package = 2;
 }
 
 /// ECDSA signature components.

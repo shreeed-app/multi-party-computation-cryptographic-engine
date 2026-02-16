@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     auth::session::{identifier::SessionId, state::SessionState},
-    messages::error::Error,
+    transport::error::Error,
 };
 
 /// This store is process-local and not persistent.

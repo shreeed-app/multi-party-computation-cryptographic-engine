@@ -17,7 +17,7 @@ use rkyv::{
     },
 };
 
-use crate::messages::error::Error;
+use crate::transport::error::Error;
 
 type HighSerializer<'a> =
     Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, RkyvError>;
@@ -46,7 +46,7 @@ where
     T: for<'a> Serialize<HighSerializer<'a>>,
 {
     to_bytes::<RkyvError>(value)
-        .map(|buffer| buffer.into_vec())
+        .map(|buffer: AlignedVec| buffer.into_vec())
         .map_err(|_| Error::InvalidMessage)
 }
 

@@ -1,12 +1,15 @@
 use std::{net::SocketAddr, time::Duration};
 
 use mpc_signer_engine::{
-    auth::ipc::{auth::TokenAuth, config::IpcConfig, server::IpcServer},
+    auth::{
+        identity::Identity,
+        ipc::{auth::TokenAuth, config::IpcConfig},
+    },
     config::EnvConfig,
-    engine::{builder::EngineBuilder, core::Engine},
-    messages::error::Error,
-    proto::signer::v1::signer_server::SignerServer,
+    proto::signer::v1::peer_server::PeerServer,
     secrets::vault::{config::VaultConfig, hashicorp::HashicorpVaultProvider},
+    service::{builder::EngineBuilder, peer_engine::PeerEngine},
+    transport::{error::Error, grpc::node_server::NodeIpcServer},
 };
 use tonic::transport::Server;
 
@@ -40,22 +43,30 @@ async fn main() -> Result<(), Error> {
         Err(error) => return Err(Error::ConfigError(error.to_string())),
     };
 
+    let identity: Identity = Identity::Node {
+        node_id: ipc_configuration.node_id.clone(),
+        participant_id: 0,
+    };
+
     // Initialize Vault.
     let vault: HashicorpVaultProvider =
         HashicorpVaultProvider::try_from_config(vault_configuration)?;
 
     // Initialize authentication.
     let authentication: TokenAuth =
-        TokenAuth::new(ipc_configuration.auth.token);
+        TokenAuth::new(ipc_configuration.auth.token, identity.clone());
 
     // Build engine with a session TTL from IPC configuration.
-    let engine: Engine = EngineBuilder::new()
+    let engine: PeerEngine = EngineBuilder::new()
         .session_ttl(Duration::from_secs(ipc_configuration.ttl_seconds))
         .build();
 
     // Build IPC server.
-    let ipc_server: IpcServer<TokenAuth, Engine, HashicorpVaultProvider> =
-        IpcServer::new(engine, authentication, vault);
+    let ipc_server: NodeIpcServer<
+        TokenAuth,
+        PeerEngine,
+        HashicorpVaultProvider,
+    > = NodeIpcServer::new(engine, authentication, vault);
 
     // Start gRPC server.
     let address: SocketAddr = match ipc_configuration.address.parse() {
@@ -64,7 +75,7 @@ async fn main() -> Result<(), Error> {
     };
 
     match Server::builder()
-        .add_service(SignerServer::new(ipc_server))
+        .add_service(PeerServer::new(ipc_server))
         .serve(address)
         .await
     {

@@ -31,4 +31,29 @@ pub enum FrostWire {
         /// postcard-encoded signature share.
         signature_share: Vec<u8>,
     },
+
+    /// Round 1 DKG package.
+    DkgRound1Package {
+        /// Participant identifier.
+        identifier: u32,
+        /// postcard-encoded round 1 package.
+        package: Vec<u8>,
+    },
+
+    /// Round 1 DKG packages from all participants.
+    DkgRound1Packages {
+        /// (from_identifier_u32, round1::Package bytes).
+        packages: Vec<(u32, Vec<u8>)>,
+    },
+
+    /// Round 2 DKG packages output to be sent to other participants.
+    DkgRound2PackagesOutput {
+        /// (to_identifier_u32, round2::Package bytes).
+        packages: Vec<(u32, Vec<u8>)>,
+    },
+
+    DkgRound2Packages {
+        /// (from_identifier_u32, round2::Package bytes).
+        packages: Vec<(u32, Vec<u8>)>,
+    },
 }

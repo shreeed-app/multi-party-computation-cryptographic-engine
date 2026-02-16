@@ -1,22 +1,23 @@
-//! Mock authentication providers for testing.
-use mpc_signer_engine::auth::ipc::auth::AuthProvider;
-use mpc_signer_engine::messages::error::Error;
+//! Mock authentication provider for testing purposes.
+use mpc_signer_engine::{
+    auth::ipc::auth::AuthProvider,
+    transport::error::Error,
+};
 use tonic::Request;
 
-/// Auth provider that always allows requests.
-pub struct AllowAllAuth;
+/// Mock authentication provider that allows all requests.
+#[derive(Clone, Default)]
+pub struct MockAuth;
 
-impl AuthProvider for AllowAllAuth {
+impl AuthProvider for MockAuth {
+    /// Always authenticate successfully.
+    ///
+    /// # Arguments
+    /// * `request` (`&Request<T>`) - Incoming request to authenticate.
+    ///
+    /// # Returns
+    /// * `Result<(), Error>` - Always returns `Ok(())`.
     fn authenticate<T>(&self, _: &Request<T>) -> Result<(), Error> {
         Ok(())
-    }
-}
-
-/// Auth provider that always rejects requests.
-pub struct DenyAllAuth;
-
-impl AuthProvider for DenyAllAuth {
-    fn authenticate<T>(&self, _: &Request<T>) -> Result<(), Error> {
-        Err(Error::InvalidToken)
     }
 }

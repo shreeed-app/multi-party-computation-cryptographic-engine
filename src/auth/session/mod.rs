@@ -4,6 +4,3 @@
 pub mod identifier;
 pub mod state;
 pub mod store;
-
-#[cfg(test)]
-pub mod tests;

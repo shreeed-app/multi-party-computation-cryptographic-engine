@@ -4,7 +4,3 @@
 
 pub mod auth;
 pub mod config;
-pub mod server;
-
-#[cfg(test)]
-pub mod tests;

@@ -5,5 +5,5 @@ pub mod cggmp24;
 pub mod codec;
 pub mod factory;
 pub mod frost;
-pub mod signing;
+pub mod protocol;
 pub mod types;

@@ -5,7 +5,7 @@ use tonic::{
     metadata::{Ascii, MetadataValue},
 };
 
-use crate::messages::error::Error;
+use crate::{auth::identity::Identity, transport::error::Error};
 
 /// IPC authentication provider. This trait defines how incoming IPC requests
 /// are authenticated.
@@ -13,27 +13,31 @@ pub trait AuthProvider: Send + Sync {
     /// Authenticate an incoming request.
     ///
     /// # Errors
-    /// `Result<(), Error>` - Returns an authentication error if the
+    /// `Result<Identity, Error>` - Returns an authentication error if the
     ///     request is not authorized.
-    fn authenticate<T>(&self, request: &Request<T>) -> Result<(), Error>;
+    fn authenticate<T>(&self, request: &Request<T>)
+    -> Result<Identity, Error>;
 }
 
 /// Token-based IPC authentication. Intended for local IPC over Unix sockets
 /// or mTLS-protected channels.
 pub struct TokenAuth {
     expected_token: String,
+    identity: Identity,
 }
 
 impl TokenAuth {
     /// Create a new token authentication provider.
     ///
     /// # Arguments
-    /// * `expected_token` - Pre-shared authentication token.
+    /// * `expected_token` (`String`) - Pre-shared authentication token.
+    /// * `identity` (`Identity`) - Identity to associate with authenticated
+    ///   requests.
     ///
     /// # Returns
     /// * `Self` - New token authentication provider.
-    pub fn new(expected_token: String) -> Self {
-        Self { expected_token }
+    pub fn new(expected_token: String, identity: Identity) -> Self {
+        Self { expected_token, identity }
     }
 }
 
@@ -49,7 +53,10 @@ impl AuthProvider for TokenAuth {
     ///
     /// # Returns
     /// * `Result<(), AuthError>` - Ok if authenticated, error otherwise.
-    fn authenticate<T>(&self, request: &Request<T>) -> Result<(), Error> {
+    fn authenticate<T>(
+        &self,
+        request: &Request<T>,
+    ) -> Result<Identity, Error> {
         let value: &MetadataValue<Ascii> =
             match request.metadata().get("authorization") {
                 Some(value) => value,
@@ -65,6 +72,6 @@ impl AuthProvider for TokenAuth {
             return Err(Error::InvalidToken);
         }
 
-        Ok(())
+        Ok(self.identity.clone())
     }
 }

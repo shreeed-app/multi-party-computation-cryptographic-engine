@@ -1,6 +1,6 @@
 //! Session state machine.
 
-use crate::transport::error::Error;
+use crate::transport::errors::Errors;
 
 /// This enforces valid transitions and prevents
 /// replay, double-finalization, or invalid round ordering.
@@ -33,14 +33,14 @@ impl SessionState {
     ///
     /// # Returns
     /// * `()` - Returns unit on success.
-    pub fn validate_round(&self, round: u32) -> Result<(), Error> {
+    pub fn validate_round(&self, round: u32) -> Result<(), Errors> {
         match self {
             // Initial state: only round 0 is valid, starting the session.
             SessionState::Initialized => {
                 if round == 0 {
                     Ok(())
                 } else {
-                    Err(Error::SessionStateInitialized(round))
+                    Err(Errors::SessionStateInitialized(round))
                 }
             },
 
@@ -49,7 +49,7 @@ impl SessionState {
                 if round == *current_round + 1 {
                     Ok(())
                 } else {
-                    Err(Error::SessionStateInProgress(
+                    Err(Errors::SessionStateInProgress(
                         current_round + 1,
                         round,
                     ))
@@ -58,7 +58,7 @@ impl SessionState {
 
             // Terminal states: no further rounds are valid.
             SessionState::Finalized | SessionState::Aborted => {
-                Err(Error::SessionStateFinalized)
+                Err(Errors::SessionStateFinalized)
             },
         }
     }
@@ -82,13 +82,13 @@ impl SessionState {
     ///
     /// # Returns
     /// * `()` - Returns unit on success.
-    pub fn finalize(&mut self) -> Result<(), Error> {
+    pub fn finalize(&mut self) -> Result<(), Errors> {
         match self {
             SessionState::InProgress { .. } => {
                 *self = SessionState::Finalized;
                 Ok(())
             },
-            _ => Err(Error::SessionStateNotFinalized),
+            _ => Err(Errors::SessionStateNotFinalized),
         }
     }
 

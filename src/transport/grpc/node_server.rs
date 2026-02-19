@@ -3,6 +3,7 @@
 use std::str::FromStr;
 
 use tonic::{Request, Response, Status};
+use tracing::instrument;
 
 use crate::{
     auth::{
@@ -24,7 +25,7 @@ use crate::{
         SubmitRoundRequest,
         SubmitRoundResponse,
         finalize_session_response::FinalOutput,
-        peer_server::Peer,
+        node_server::Node,
     },
     protocols::{
         algorithm::Algorithm,
@@ -42,7 +43,7 @@ use crate::{
     },
     secrets::{types::KeyShare, vault::api::VaultProvider},
     service::api::EngineApi,
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// gRPC IPC server exposing the signing engine.
@@ -82,7 +83,7 @@ impl<A: AuthProvider, E: EngineApi, V: VaultProvider> NodeIpcServer<A, E, V> {
     fn authenticate<T>(
         &self,
         request: &Request<T>,
-    ) -> Result<Identity, Error> {
+    ) -> Result<Identity, Errors> {
         self.auth.authenticate(request)
     }
 }
@@ -92,7 +93,7 @@ impl<
     A: AuthProvider + Send + Sync + 'static,
     E: EngineApi + Send + Sync + 'static,
     V: VaultProvider + Send + Sync + 'static,
-> Peer for NodeIpcServer<A, E, V>
+> Node for NodeIpcServer<A, E, V>
 {
     /// Start a new signing session.
     ///
@@ -106,6 +107,7 @@ impl<
     /// # Returns
     /// * `Result<Response<StartSessionResponse>, Status>` - gRPC response or
     ///   error.
+    #[instrument(skip(self, request))]
     async fn start_signing_session(
         &self,
         request: Request<StartSigningSessionRequest>,
@@ -127,7 +129,7 @@ impl<
             match Algorithm::from_str(&request.algorithm) {
                 Ok(algorithm) => algorithm,
                 Err(_) => {
-                    return Err(Status::from(Error::UnsupportedAlgorithm(
+                    return Err(Status::from(Errors::UnsupportedAlgorithm(
                         request.algorithm.clone(),
                     )));
                 },
@@ -170,6 +172,7 @@ impl<
     /// # Returns
     /// * `Result<Response<StartSessionResponse>, Status>` - gRPC response or
     ///   error.
+    #[instrument(skip(self, request))]
     async fn start_key_generation_session(
         &self,
         request: Request<StartKeyGenerationSessionRequest>,
@@ -183,7 +186,7 @@ impl<
 
         let algorithm: Algorithm = Algorithm::from_str(&request.algorithm)
             .map_err(|_| {
-                Status::from(Error::UnsupportedAlgorithm(
+                Status::from(Errors::UnsupportedAlgorithm(
                     request.algorithm.clone(),
                 ))
             })?;
@@ -222,6 +225,7 @@ impl<
     /// # Returns
     /// * `Result<Response<SubmitRoundResponse>, Status>` - gRPC response or
     ///   error.
+    #[instrument(skip(self, request))]
     async fn submit_round(
         &self,
         request: Request<SubmitRoundRequest>,
@@ -236,7 +240,7 @@ impl<
         {
             Some(id) => id,
             None => {
-                return Err(Status::from(Error::SessionNotFound(
+                return Err(Status::from(Errors::SessionNotFound(
                     request.session_id.clone(),
                 )));
             },
@@ -275,6 +279,7 @@ impl<
     /// # Returns
     /// * `Result<Response<FinalizeSessionResponse>, Status>` - gRPC response
     ///   or error.
+    #[instrument(skip(self, request))]
     async fn finalize_session(
         &self,
         request: Request<FinalizeSessionRequest>,
@@ -290,7 +295,7 @@ impl<
         {
             Some(id) => id,
             None => {
-                return Err(Status::from(Error::SessionNotFound(
+                return Err(Status::from(Errors::SessionNotFound(
                     request.session_id.clone(),
                 )));
             },
@@ -346,6 +351,7 @@ impl<
     /// # Returns
     /// * `Result<Response<AbortSessionResponse>, Status>` - gRPC response or
     ///   error.
+    #[instrument(skip(self, request))]
     async fn abort_session(
         &self,
         request: Request<AbortSessionRequest>,
@@ -360,7 +366,7 @@ impl<
         {
             Some(id) => id,
             None => {
-                return Err(Status::from(Error::SessionNotFound(
+                return Err(Status::from(Errors::SessionNotFound(
                     request.session_id.clone(),
                 )));
             },

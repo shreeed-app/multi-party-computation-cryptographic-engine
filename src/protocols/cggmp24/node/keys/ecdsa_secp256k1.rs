@@ -37,7 +37,7 @@ use crate::{
         },
     },
     secrets::secret::Secret,
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// CGGMP24 ECDSA Secp256k1 key generation protocol instance.
@@ -79,14 +79,14 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     /// # Returns
     /// * `Cggmp24EcdsaSecp256k1NodeKeyGeneration` - Initialized protocol
     ///   instance.
-    pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Error> {
+    pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
         let init: NodeKeyGenerationInit = match protocol_init {
             ProtocolInit::KeyGeneration(KeyGenerationInit::Node(init)) => init,
-            _ => return Err(Error::InvalidProtocolInit),
+            _ => return Err(Errors::InvalidProtocolInit),
         };
 
         if init.common.algorithm != Algorithm::Cggmp24EcdsaSecp256k1 {
-            return Err(Error::UnsupportedAlgorithm(
+            return Err(Errors::UnsupportedAlgorithm(
                 init.common.algorithm.as_str().into(),
             ));
         }
@@ -95,24 +95,24 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
         if init.common.threshold == 0
             || init.common.threshold > init.common.participants
         {
-            return Err(Error::InvalidThreshold);
+            return Err(Errors::InvalidThreshold);
         }
 
         // CGGMP24 key generation uses indices i in [0, n).
         let identifier: u16 = init
             .identifier
             .try_into()
-            .map_err(|_| Error::InvalidProtocolInit)?;
+            .map_err(|_| Errors::InvalidProtocolInit)?;
 
         let participants_u16: u16 = u16::try_from(init.common.participants)
-            .map_err(|_| Error::InvalidProtocolInit)?;
+            .map_err(|_| Errors::InvalidProtocolInit)?;
 
         if identifier >= participants_u16 {
-            return Err(Error::InvalidProtocolInit);
+            return Err(Errors::InvalidProtocolInit);
         }
 
         let threshold_u16: u16 = u16::try_from(init.common.threshold)
-            .map_err(|_| Error::InvalidProtocolInit)?;
+            .map_err(|_| Errors::InvalidProtocolInit)?;
 
         let execution_id_bytes: Vec<u8> =
             init.common.key_id.clone().into_bytes();
@@ -159,10 +159,10 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     fn wrap_outgoing(
         &mut self,
         outgoing: Outgoing<CggmpKeyGenerationMessage>,
-    ) -> Result<RoundMessage, Error> {
+    ) -> Result<RoundMessage, Errors> {
         // Serialize CGGMP24 key generation message.
         let inner: Vec<u8> =
-            to_vec(&outgoing.msg).map_err(|_| Error::InvalidMessage)?;
+            to_vec(&outgoing.msg).map_err(|_| Errors::InvalidMessage)?;
 
         // Wrap into wire format.
         let payload: Vec<u8> =
@@ -227,12 +227,12 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     }
 
     /// Advance the protocol by processing an incoming message from another
-    /// participant. This method is called by the orchestrator when a message
+    /// participant. This method is called by the controller when a message
     /// is received from the transport layer.
     ///
     /// It deserializes the incoming message, sends it to the worker via the
     /// `incoming_transmitter` channel, and checks if the worker has produced
-    /// any outgoing messages to send back to the orchestrator.
+    /// any outgoing messages to send back to the controller.
     ///
     /// # Arguments
     /// * `message` (`RoundMessage`) - Message received from another
@@ -248,15 +248,15 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     /// # Returns
     /// * `Option<RoundMessage>` - If the worker has produced an outgoing
     ///   message in response to the incoming message, it is returned wrapped
-    ///   in a `RoundMessage` ready to be sent by the orchestrator. If no
+    ///   in a `RoundMessage` ready to be sent by the controller. If no
     ///   outgoing message is produced, `None` is returned.
-    async fn next_round(&mut self) -> Result<Option<RoundMessage>, Error> {
+    async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Error::Aborted);
+            return Err(Errors::Aborted);
         }
 
         // Check if the worker has produced any outgoing messages to send back
-        // to the orchestrator. This allows the protocol to respond immediately
+        // to the controller. This allows the protocol to respond immediately
         // to any messages produced by the worker, even if they are not
         // directly triggered by an incoming message (e.g., if the worker
         // produces a message as part of its internal processing).
@@ -268,7 +268,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     }
 
     /// Finalize the protocol and return the result. This is called by the
-    /// orchestrator when the protocol is complete and the final output is
+    /// controller when the protocol is complete and the final output is
     /// needed.
     ///
     /// It waits for the worker to send the final result via the
@@ -292,9 +292,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     async fn handle_message(
         &mut self,
         message: RoundMessage,
-    ) -> Result<Option<RoundMessage>, Error> {
+    ) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Error::Aborted);
+            return Err(Errors::Aborted);
         }
 
         let Cggmp24Wire::ProtocolMessage { payload }: Cggmp24Wire =
@@ -302,13 +302,13 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
 
         // Deserialize CGGMP24 key generation message (not signing message).
         let key_generation_message: CggmpKeyGenerationMessage =
-            from_slice(&payload).map_err(|_| Error::InvalidMessage)?;
+            from_slice(&payload).map_err(|_| Errors::InvalidMessage)?;
 
         let sender: u16 = message
             .from
-            .ok_or(Error::InvalidMessage)?
+            .ok_or(Errors::InvalidMessage)?
             .try_into()
-            .map_err(|_| Error::InvalidMessage)?;
+            .map_err(|_| Errors::InvalidMessage)?;
 
         self.incoming_transmitter
             .send(Incoming {
@@ -321,7 +321,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                 },
                 msg: key_generation_message,
             })
-            .map_err(|_| Error::Aborted)?;
+            .map_err(|_| Errors::Aborted)?;
 
         if let Ok(outgoing) = self.outgoing_receiver.try_recv() {
             return Ok(Some(self.wrap_outgoing(outgoing)?));
@@ -331,7 +331,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     }
 
     /// Finalize the protocol and return the result. This is called by the
-    /// orchestrator when the protocol is complete and the final output is
+    /// controller when the protocol is complete and the final output is
     /// needed.
     ///
     /// It waits for the worker to send the final result via the
@@ -352,9 +352,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     /// # Returns
     /// * `ProtocolOutput::KeyGeneration` - Contains the key identifier, the
     ///   serialized key share, and the public key bytes.
-    async fn finalize(&mut self) -> Result<ProtocolOutput, Error> {
+    async fn finalize(&mut self) -> Result<ProtocolOutput, Errors> {
         if self.aborted {
-            return Err(Error::Aborted);
+            return Err(Errors::Aborted);
         }
 
         match self.done_receiver.recv() {
@@ -364,16 +364,16 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                 // long as your signing protocol later knows
                 // how to “complete” it (aux-info step).
                 let json: Vec<u8> = serde_json::to_vec(&incomplete_key_share)
-                    .map_err(|_| Error::InvalidKeyShare)?;
+                    .map_err(|_| Errors::InvalidKeyShare)?;
 
                 let stored: Cggmp24StoredKey = Cggmp24StoredKey {
                     identifier: u16::try_from(self.identifier_u32)
-                        .map_err(|_| Error::InvalidKeyShare)?,
+                        .map_err(|_| Errors::InvalidKeyShare)?,
                     key_share_json: json,
                 };
 
                 let blob: Vec<u8> = rkyv::to_bytes::<RkyvError>(&stored)
-                    .map_err(|_| Error::InvalidKeyShare)?
+                    .map_err(|_| Errors::InvalidKeyShare)?
                     .into_vec();
 
                 // Public key bytes: depending on the exact CGGMP24 type
@@ -393,14 +393,14 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                     key_share: Secret::new(blob),
                     public_key,
                     public_key_package: to_vec(&incomplete_key_share)
-                        .map_err(|_| Error::InvalidKeyShare)?,
+                        .map_err(|_| Errors::InvalidKeyShare)?,
                 })
             },
-            _ => Err(Error::InvalidKeyShare),
+            _ => Err(Errors::InvalidKeyShare),
         }
     }
 
-    /// Abort the protocol. This is called by the orchestrator when the
+    /// Abort the protocol. This is called by the controller when the
     /// protocol needs to be aborted (e.g., due to a timeout or an
     /// unrecoverable error). It sets the `aborted` flag to true, which
     /// will cause all subsequent calls to `handle_message`, `next_round`,

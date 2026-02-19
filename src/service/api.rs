@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use crate::{
     auth::session::identifier::SessionId,
     protocols::types::{ProtocolInit, ProtocolOutput, RoundMessage},
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// Public engine interface exposed to the IPC layer.
@@ -25,7 +25,7 @@ pub trait EngineApi: Send + Sync + 'static {
     async fn start_session(
         &self,
         init: ProtocolInit,
-    ) -> Result<(SessionId, RoundMessage), Error>;
+    ) -> Result<(SessionId, RoundMessage), Errors>;
 
     /// Submit a round message for an existing session.
     ///
@@ -43,7 +43,7 @@ pub trait EngineApi: Send + Sync + 'static {
         &self,
         session_id: SessionId,
         message: RoundMessage,
-    ) -> Result<RoundMessage, Error>;
+    ) -> Result<RoundMessage, Errors>;
 
     /// Finalize a signing session.
     ///
@@ -58,7 +58,7 @@ pub trait EngineApi: Send + Sync + 'static {
     async fn finalize(
         &self,
         session_id: SessionId,
-    ) -> Result<ProtocolOutput, Error>;
+    ) -> Result<ProtocolOutput, Errors>;
 
     /// Abort a signing session.
     ///
@@ -70,5 +70,5 @@ pub trait EngineApi: Send + Sync + 'static {
     ///
     /// # Returns
     /// * `()` - Unit.
-    async fn abort(&self, session_id: SessionId) -> Result<(), Error>;
+    async fn abort(&self, session_id: SessionId) -> Result<(), Errors>;
 }

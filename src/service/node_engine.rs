@@ -7,6 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use tracing::instrument;
 
 use crate::{
     auth::session::{
@@ -20,18 +21,18 @@ use crate::{
         types::{ProtocolInit, ProtocolOutput, RoundMessage},
     },
     service::{api::EngineApi, entry::SessionEntry},
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// Engine implementation.
-pub struct PeerEngine {
+pub struct NodeEngine {
     /// Session store for managing session life cycles.
     pub sessions: SessionStore,
     /// Live sessions held in memory.
     pub live: RwLock<HashMap<SessionId, SessionEntry>>,
 }
 
-impl PeerEngine {
+impl NodeEngine {
     /// Create a new engine instance.
     ///
     /// # Arguments
@@ -61,7 +62,7 @@ impl PeerEngine {
 }
 
 #[async_trait]
-impl EngineApi for PeerEngine {
+impl EngineApi for NodeEngine {
     /// Start a new signing session.
     ///
     /// # Arguments
@@ -72,10 +73,11 @@ impl EngineApi for PeerEngine {
     ///
     /// # Returns
     /// * `(SessionId, RoundMessage)` - New session ID and first round message.
+    #[instrument(skip(self, init))]
     async fn start_session(
         &self,
         init: ProtocolInit,
-    ) -> Result<(SessionId, RoundMessage), Error> {
+    ) -> Result<(SessionId, RoundMessage), Errors> {
         let session_id: SessionId = self.sessions.create();
 
         let mut protocol: Box<dyn Protocol> = ProtocolFactory::create(init)
@@ -86,7 +88,7 @@ impl EngineApi for PeerEngine {
         let round: RoundMessage =
             protocol.next_round().await?.ok_or_else(|| {
                 self.sessions.remove(session_id);
-                Error::InvalidState(session_id.to_string())
+                Errors::InvalidState(session_id.to_string())
             })?;
 
         self.sessions.with_session(
@@ -104,7 +106,7 @@ impl EngineApi for PeerEngine {
 
         self.live
             .write()
-            .map_err(|_| Error::LiveLockAcquireError)?
+            .map_err(|_| Errors::LiveLockAcquireError)?
             .insert(session_id, entry);
 
         Ok((session_id, round))
@@ -120,11 +122,12 @@ impl EngineApi for PeerEngine {
     ///
     /// # Returns
     /// * `RoundMessage` - Response round message.
+    #[instrument(skip(self, message), fields(session_id = %session_id))]
     async fn submit_round(
         &self,
         session_id: SessionId,
         message: RoundMessage,
-    ) -> Result<RoundMessage, Error> {
+    ) -> Result<RoundMessage, Errors> {
         self.sessions
             .with_session(session_id, |state: &mut SessionState| {
                 state.validate_round(message.round)
@@ -134,15 +137,15 @@ impl EngineApi for PeerEngine {
             let mut live: RwLockWriteGuard<
                 '_,
                 HashMap<SessionId, SessionEntry>,
-            > = self.live.write().map_err(|_| Error::LiveLockAcquireError)?;
+            > = self.live.write().map_err(|_| Errors::LiveLockAcquireError)?;
 
             let entry: &mut SessionEntry =
                 live.get_mut(&session_id).ok_or_else(|| {
-                    Error::SessionNotFound(session_id.to_string())
+                    Errors::SessionNotFound(session_id.to_string())
                 })?;
 
             entry.protocol.take().ok_or_else(|| {
-                Error::InvalidState("Protocol missing.".into())
+                Errors::InvalidState("Protocol missing.".into())
             })?
         };
 
@@ -150,14 +153,14 @@ impl EngineApi for PeerEngine {
             protocol
                 .handle_message(message)
                 .await?
-                .ok_or_else(|| Error::InvalidState(session_id.to_string()))?;
+                .ok_or_else(|| Errors::InvalidState(session_id.to_string()))?;
 
         let mut live: RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>> =
-            self.live.write().map_err(|_| Error::LiveLockAcquireError)?;
+            self.live.write().map_err(|_| Errors::LiveLockAcquireError)?;
 
         let entry: &mut SessionEntry = live
             .get_mut(&session_id)
-            .ok_or_else(|| Error::SessionNotFound(session_id.to_string()))?;
+            .ok_or_else(|| Errors::SessionNotFound(session_id.to_string()))?;
 
         entry.protocol = Some(protocol);
 
@@ -182,10 +185,11 @@ impl EngineApi for PeerEngine {
     ///
     /// # Returns
     /// * `ProtocolOutput` - Final signature.
+    #[instrument(skip(self), fields(session_id = %session_id))]
     async fn finalize(
         &self,
         session_id: SessionId,
-    ) -> Result<ProtocolOutput, Error> {
+    ) -> Result<ProtocolOutput, Errors> {
         self.sessions
             .with_session(session_id, |state: &mut SessionState| {
                 state.finalize()
@@ -195,15 +199,15 @@ impl EngineApi for PeerEngine {
             let mut live: RwLockWriteGuard<
                 '_,
                 HashMap<SessionId, SessionEntry>,
-            > = self.live.write().map_err(|_| Error::LiveLockAcquireError)?;
+            > = self.live.write().map_err(|_| Errors::LiveLockAcquireError)?;
 
             let entry: SessionEntry =
                 live.remove(&session_id).ok_or_else(|| {
-                    Error::SessionNotFound(session_id.to_string())
+                    Errors::SessionNotFound(session_id.to_string())
                 })?;
 
             entry.protocol.ok_or_else(|| {
-                Error::InvalidState("Protocol missing.".into())
+                Errors::InvalidState("Protocol missing.".into())
             })?
         };
 
@@ -222,7 +226,8 @@ impl EngineApi for PeerEngine {
     ///
     /// # Returns
     /// * `()` - Nothing.
-    async fn abort(&self, session_id: SessionId) -> Result<(), Error> {
+    #[instrument(skip(self), fields(session_id = %session_id))]
+    async fn abort(&self, session_id: SessionId) -> Result<(), Errors> {
         self.sessions.with_session(
             session_id,
             |state: &mut SessionState| {

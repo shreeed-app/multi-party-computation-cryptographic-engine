@@ -15,7 +15,9 @@
 
 pub mod auth;
 pub mod config;
+pub mod logging;
 pub mod protocols;
+pub mod runtime;
 pub mod secrets;
 pub mod service;
 pub mod transport;
@@ -39,4 +41,8 @@ pub mod proto {
             include!(concat!(env!("OUT_DIR"), "/signer.v1.rs"));
         }
     }
+
+    /// Protobuf file descriptor set used for gRPC reflection.
+    pub const FILE_DESCRIPTOR_SET: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/proto_descriptor.bin"));
 }

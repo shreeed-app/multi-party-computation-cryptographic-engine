@@ -17,7 +17,7 @@ use rkyv::{
     },
 };
 
-use crate::transport::error::Error;
+use crate::transport::errors::Errors;
 
 type HighSerializer<'a> =
     Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, RkyvError>;
@@ -40,14 +40,14 @@ impl<T> WireMessage for T where T: Archive + Sized {}
 ///
 /// # Returns
 /// * `Vec<u8>` - Encoded message bytes.
-pub fn encode_wire<T>(value: &T) -> Result<Vec<u8>, Error>
+pub fn encode_wire<T>(value: &T) -> Result<Vec<u8>, Errors>
 where
     T: WireMessage,
     T: for<'a> Serialize<HighSerializer<'a>>,
 {
     to_bytes::<RkyvError>(value)
         .map(|buffer: AlignedVec| buffer.into_vec())
-        .map_err(|_| Error::InvalidMessage)
+        .map_err(|_| Errors::InvalidMessage)
 }
 
 /// Decodes the message.
@@ -60,11 +60,11 @@ where
 ///
 /// # Returns
 /// * `T` - Decoded message.
-pub fn decode_wire<T>(bytes: &[u8]) -> Result<T, Error>
+pub fn decode_wire<T>(bytes: &[u8]) -> Result<T, Errors>
 where
     T: WireMessage,
     T::Archived: for<'l> CheckBytes<HighValidator<'l>>,
     T::Archived: Deserialize<T, HighDeserializer>,
 {
-    from_bytes::<T, RkyvError>(bytes).map_err(|_| Error::InvalidMessage)
+    from_bytes::<T, RkyvError>(bytes).map_err(|_| Errors::InvalidMessage)
 }

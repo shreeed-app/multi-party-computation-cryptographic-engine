@@ -17,7 +17,7 @@ use crate::{
         protocol::Protocol,
         types::{KeyGenerationInit, ProtocolInit, SigningInit},
     },
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// Factory responsible for instantiating protocols.
@@ -37,7 +37,7 @@ impl ProtocolFactory {
     /// * `Box<dyn Protocol>` - Initialized protocol instance.
     pub fn create(
         protocol_init: ProtocolInit,
-    ) -> Result<Box<dyn Protocol>, Error> {
+    ) -> Result<Box<dyn Protocol>, Errors> {
         match protocol_init {
             ProtocolInit::KeyGeneration(init) => match init {
                 KeyGenerationInit::Node(init) => match init.common.algorithm {
@@ -68,7 +68,7 @@ impl ProtocolFactory {
                 },
 
                 KeyGenerationInit::Controller(_) => {
-                    Err(Error::UnsupportedAlgorithm(
+                    Err(Errors::UnsupportedAlgorithm(
                         "Controller key generation not implemented".into(),
                     ))
                 },
@@ -97,7 +97,7 @@ impl ProtocolFactory {
                 },
 
                 SigningInit::Controller(_) => {
-                    Err(Error::UnsupportedAlgorithm(
+                    Err(Errors::UnsupportedAlgorithm(
                         "Controller signing not implemented".into(),
                     ))
                 },

@@ -128,7 +128,7 @@ fn run_worker(worker: Worker) {
     let mut backoff: u64 = 1u64; // µs
 
     // Important: messages delivered via `incoming_receiver` must preserve
-    // the order enforced by the orchestrator. Reordering would
+    // the order enforced by the controller. Reordering would
     // violate CGGMP24 protocol assumptions.
     loop {
         match state_machine.proceed() {

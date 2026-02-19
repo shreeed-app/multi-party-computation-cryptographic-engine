@@ -110,10 +110,15 @@ description = "Create a release build and Docker image."
 category = "Release"
 dependencies = ["build-musl", "docker"]
 
-[tasks.run]
-description = "Run the project."
+[tasks.run-node]
+description = "Run the project as node."
 command = "cargo"
-args = ["run"]
+args = ["run", "--", "node", "--config", "config/node.toml"]
+
+[tasks.run-controller]
+description = "Run the project as controller."
+command = "cargo"
+args = ["run", "--", "controller", "--config", "config/controller.toml"]
 
 [tasks.deny]
 description = "Run cargo-deny to check for license and security issues."

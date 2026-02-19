@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::{secrets::types::KeyShare, transport::error::Error};
+use crate::{secrets::types::KeyShare, transport::errors::Errors};
 
 /// Vault abstraction for retrieving key shares.
 #[async_trait]
@@ -17,7 +17,7 @@ pub trait VaultProvider: Send + Sync + 'static {
     ///
     /// # Returns
     /// * `KeyShare` - Opaque key share bytes.
-    async fn get_key_share(&self, key_id: &str) -> Result<KeyShare, Error>;
+    async fn get_key_share(&self, key_id: &str) -> Result<KeyShare, Errors>;
 
     /// Store a key share by its identifier.
     ///
@@ -34,5 +34,5 @@ pub trait VaultProvider: Send + Sync + 'static {
         &self,
         key_id: &str,
         key_share: KeyShare,
-    ) -> Result<(), Error>;
+    ) -> Result<(), Errors>;
 }

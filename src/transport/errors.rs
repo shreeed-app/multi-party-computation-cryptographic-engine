@@ -10,13 +10,13 @@ use tonic::Status;
 ///
 /// # Returns
 /// * `Error` - The corresponding canonical error type.
-pub fn map_status(error: Status) -> Error {
-    Error::Generic(error.to_string())
+pub fn map_status(error: Status) -> Errors {
+    Errors::Generic(error.to_string())
 }
 
 /// Canonical error type.
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum Error {
+pub enum Errors {
     /// Configuration error: invalid configuration provided.
     #[error("Configuration error: {0}")]
     ConfigError(String),

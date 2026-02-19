@@ -67,7 +67,7 @@ pub struct ControllerSigningInit {
     pub public_key_package: Vec<u8>,
     /// Participant identifiers and addresses of all participants (including
     /// self).
-    pub peers: Vec<NodeIpcClient>,
+    pub nodes: Vec<NodeIpcClient>,
 }
 
 /// Key generation protocol initialization context.

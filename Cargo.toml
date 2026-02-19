@@ -9,6 +9,11 @@ description = "Production-grade MPC cryptographic engine."
 # Packages used by protoc files generation.
 ignored = ["prost", "tonic-prost", "strum"]
 
+[workspace.metadata.dylint]
+libraries = [
+    { git = "https://github.com/shreeed-app/rust-security-lints", branch = "dev", pattern = "rules/*" },
+]
+
 [[bin]]
 name = "app"
 path = "src/main.rs"
@@ -25,6 +30,7 @@ cggmp24 = { version = "0.7.0-alpha.3", features = [
     "state-machine",
     "curve-secp256k1",
 ] }
+clap = { version = "4", features = ["derive"] }
 config = "0.15.19"
 crossbeam-channel = "0.5.15"
 dotenvy = "0.15.7"
@@ -49,16 +55,20 @@ strum = "0.27.2"
 strum_macros = "0.27.2"
 thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }
+toml = "1.0.3"
 tonic = "0.14.4"
 tonic-prost = "0.14.4"
+tonic-reflection = "0.14.4"
+tracing = "0.1"
+tracing-error = "0.2"
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "fmt",
+    "json",
+] }
 uuid = { version = "1.20.1", features = ["v4"] }
 vaultrs = "0.7.4"
 zeroize = "1.8"
 
 [build-dependencies]
 tonic-prost-build = "0.14.4"
-
-[workspace.metadata.dylint]
-libraries = [
-    { git = "https://github.com/shreeed-app/rust-security-lints", branch = "dev", pattern = "rules/*" },
-]

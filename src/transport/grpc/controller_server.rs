@@ -3,6 +3,7 @@
 use std::str::FromStr;
 
 use tonic::{Request, Response, Status};
+use tracing::instrument;
 
 use crate::{
     auth::session::identifier::SessionId,
@@ -15,7 +16,7 @@ use crate::{
         SignRequest,
         SignResponse,
         SignatureResult,
-        orchestrator_server::Orchestrator,
+        controller_server::Controller,
     },
     protocols::{
         algorithm::Algorithm,
@@ -32,7 +33,7 @@ use crate::{
         },
     },
     service::api::EngineApi,
-    transport::{error::Error, grpc::node_client::NodeIpcClient},
+    transport::{errors::Errors, grpc::node_client::NodeIpcClient},
 };
 
 /// Controller IPC server.
@@ -51,7 +52,7 @@ impl<E: EngineApi> ControllerIpcServer<E> {
 }
 
 #[tonic::async_trait]
-impl<E: EngineApi> Orchestrator for ControllerIpcServer<E> {
+impl<E: EngineApi> Controller for ControllerIpcServer<E> {
     /// Generate distributed key.
     ///
     /// # Arguments
@@ -65,6 +66,7 @@ impl<E: EngineApi> Orchestrator for ControllerIpcServer<E> {
     /// # Returns
     /// * `GenerateKeyResponse` - The response containing the generated public
     ///   key.
+    #[instrument(skip(self, request))]
     async fn generate_key(
         &self,
         request: Request<GenerateKeyRequest>,
@@ -75,7 +77,7 @@ impl<E: EngineApi> Orchestrator for ControllerIpcServer<E> {
             match Algorithm::from_str(&request.algorithm) {
                 Ok(algorithm) => algorithm,
                 Err(_) => {
-                    return Err(Status::from(Error::UnsupportedAlgorithm(
+                    return Err(Status::from(Errors::UnsupportedAlgorithm(
                         request.algorithm.clone(),
                     )));
                 },
@@ -128,6 +130,7 @@ impl<E: EngineApi> Orchestrator for ControllerIpcServer<E> {
     ///
     /// # Returns
     /// * `SignResponse` - The response containing the final signature.
+    #[instrument(skip(self, request))]
     async fn sign(
         &self,
         request: Request<SignRequest>,
@@ -140,7 +143,7 @@ impl<E: EngineApi> Orchestrator for ControllerIpcServer<E> {
                     key_id: request.key_id.clone(),
                     algorithm: Algorithm::from_str(&request.algorithm)
                         .map_err(|_| {
-                            Status::from(Error::UnsupportedAlgorithm(
+                            Status::from(Errors::UnsupportedAlgorithm(
                                 request.algorithm.clone(),
                             ))
                         })?,
@@ -149,7 +152,7 @@ impl<E: EngineApi> Orchestrator for ControllerIpcServer<E> {
                     message: request.message.clone(),
                 },
                 public_key_package: request.public_key_package.clone(),
-                peers: self.nodes.clone(),
+                nodes: self.nodes.clone(),
             }),
         );
 
@@ -181,6 +184,7 @@ impl<E: EngineApi> Orchestrator for ControllerIpcServer<E> {
     /// # Errors
     /// * `Status` - If the session ID is invalid or if aborting the session
     ///   fails.
+    #[instrument(skip(self, request))]
     async fn abort(
         &self,
         request: Request<AbortRequest>,
@@ -189,7 +193,7 @@ impl<E: EngineApi> Orchestrator for ControllerIpcServer<E> {
 
         let session_id: SessionId = SessionId::parse(&request.session_id)
             .ok_or_else(|| {
-                Status::from(Error::SessionNotFound(request.session_id))
+                Status::from(Errors::SessionNotFound(request.session_id))
             })?;
 
         self.engine.abort(session_id).await.map_err(Status::from)?;

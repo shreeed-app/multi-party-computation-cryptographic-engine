@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::service::peer_engine::PeerEngine;
+use crate::service::node_engine::NodeEngine;
 
 /// Builder for [`Engine`] responsible for wiring runtime configuration
 /// and producing a fully initialized engine instance.
@@ -32,8 +32,8 @@ impl EngineBuilder {
     ///
     /// # Returns
     /// * `Engine` - Fully initialized engine instance.
-    pub fn build(self) -> PeerEngine {
-        PeerEngine::new(self.session_ttl)
+    pub fn build(self) -> NodeEngine {
+        NodeEngine::new(self.session_ttl)
     }
 }
 

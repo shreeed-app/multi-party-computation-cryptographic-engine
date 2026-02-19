@@ -1,9 +1,10 @@
-use std::{error::Error, path::Path};
+use std::{env::var, error::Error, path::Path};
 
 use tonic_prost_build::configure;
 
 const PROTO_DIRECTORY: &str = "proto/signer/v1";
 const PROTO_FILENAME: &str = "signer.proto";
+const PROTO_DESCRIPTOR: &str = "proto_descriptor.bin";
 
 /// Build script to compile protobuf definitions into Rust code.
 ///
@@ -19,9 +20,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         .to_string_lossy()
         .into_owned();
 
+    let output_directory: String = var("OUT_DIR")?;
+    let proto_descriptor_filepath: String = Path::new(&output_directory)
+        .join(PROTO_DESCRIPTOR)
+        .to_string_lossy()
+        .into_owned();
+
     match configure()
         .build_server(true)
         .build_client(true)
+        .file_descriptor_set_path(proto_descriptor_filepath)
         .compile_protos(&[proto_filepath], &[String::from(PROTO_DIRECTORY)])
     {
         Ok(_) => (),

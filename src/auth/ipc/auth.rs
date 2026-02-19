@@ -5,7 +5,7 @@ use tonic::{
     metadata::{Ascii, MetadataValue},
 };
 
-use crate::{auth::identity::Identity, transport::error::Error};
+use crate::{auth::identity::Identity, transport::errors::Errors};
 
 /// IPC authentication provider. This trait defines how incoming IPC requests
 /// are authenticated.
@@ -15,8 +15,10 @@ pub trait AuthProvider: Send + Sync {
     /// # Errors
     /// `Result<Identity, Error>` - Returns an authentication error if the
     ///     request is not authorized.
-    fn authenticate<T>(&self, request: &Request<T>)
-    -> Result<Identity, Error>;
+    fn authenticate<T>(
+        &self,
+        request: &Request<T>,
+    ) -> Result<Identity, Errors>;
 }
 
 /// Token-based IPC authentication. Intended for local IPC over Unix sockets
@@ -56,20 +58,20 @@ impl AuthProvider for TokenAuth {
     fn authenticate<T>(
         &self,
         request: &Request<T>,
-    ) -> Result<Identity, Error> {
+    ) -> Result<Identity, Errors> {
         let value: &MetadataValue<Ascii> =
             match request.metadata().get("authorization") {
                 Some(value) => value,
-                None => return Err(Error::MissingAuthorization),
+                None => return Err(Errors::MissingAuthorization),
             };
 
         let token: &str = match value.to_str() {
             Ok(token) => token,
-            Err(_) => return Err(Error::InvalidAuthorizationEncoding),
+            Err(_) => return Err(Errors::InvalidAuthorizationEncoding),
         };
 
         if token != self.expected_token {
-            return Err(Error::InvalidToken);
+            return Err(Errors::InvalidToken);
         }
 
         Ok(self.identity.clone())

@@ -7,7 +7,7 @@ use crate::{
         algorithm::Algorithm,
         types::{ProtocolOutput, Round, RoundMessage},
     },
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// Trait implemented by all protocols. Each protocol instance corresponds
@@ -41,7 +41,7 @@ pub trait Protocol: Send + Sync {
     /// Process an incoming round message and advance the protocol state.
     ///
     /// # Arguments
-    /// * `message` (`RoundMessage`) - Message received from another peer.
+    /// * `message` (`RoundMessage`) - Message received from another node.
     ///
     /// # Returns
     /// * `Option<RoundMessage>` - Message to broadcast for the next round.
@@ -51,7 +51,7 @@ pub trait Protocol: Send + Sync {
     async fn handle_message(
         &mut self,
         message: RoundMessage,
-    ) -> Result<Option<RoundMessage>, Error>;
+    ) -> Result<Option<RoundMessage>, Errors>;
 
     /// Advance the protocol without receiving a message.
     /// Used to initiate round 0 or generate local contributions.
@@ -61,7 +61,7 @@ pub trait Protocol: Send + Sync {
     ///
     /// # Errors
     /// * `Error` - If advancing the round fails.
-    async fn next_round(&mut self) -> Result<Option<RoundMessage>, Error>;
+    async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors>;
 
     /// Finalize the protocol and return the result.
     /// This can only be called once the protocol is complete.
@@ -71,7 +71,7 @@ pub trait Protocol: Send + Sync {
     ///
     /// # Errors
     /// * `Error` - If finalization fails.
-    async fn finalize(&mut self) -> Result<ProtocolOutput, Error>;
+    async fn finalize(&mut self) -> Result<ProtocolOutput, Errors>;
 
     /// Abort the protocol.
     /// After calling this method, no further operations should be performed.

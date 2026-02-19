@@ -9,13 +9,12 @@ use vaultrs::{
 };
 
 use crate::{
-    config::EnvConfig,
     secrets::{
         secret::Secret,
         types::KeyShare,
         vault::{api::VaultProvider, config::VaultConfig},
     },
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// HashiCorp Vault KVv2 provider.
@@ -42,16 +41,10 @@ impl HashicorpVaultProvider {
     ///
     /// # Returns
     /// * `Self` - New HashiCorp Vault provider instance.
-    pub fn try_from_config(config: VaultConfig) -> Result<Self, Error> {
+    pub fn try_from_config(config: VaultConfig) -> Result<Self, Errors> {
         let token: String = match &config.token {
             Some(token) => token.clone(),
-            None => match EnvConfig::load() {
-                Ok(config) => match &config.vault_token {
-                    Some(token) => token.clone(),
-                    None => return Err(Error::VaultTokenMissing),
-                },
-                Err(_) => return Err(Error::VaultTokenMissing),
-            },
+            None => return Err(Errors::VaultTokenMissing),
         };
 
         let settings: VaultClientSettings =
@@ -62,12 +55,12 @@ impl HashicorpVaultProvider {
                 .build()
             {
                 Ok(settings) => settings,
-                Err(_) => return Err(Error::VaultConfigError),
+                Err(_) => return Err(Errors::VaultConfigError),
             };
 
         let client: VaultClient = match VaultClient::new(settings) {
             Ok(client) => client,
-            Err(_) => return Err(Error::VaultError),
+            Err(_) => return Err(Errors::VaultError),
         };
 
         Ok(Self {
@@ -97,7 +90,7 @@ impl VaultProvider for HashicorpVaultProvider {
     async fn get_key_share(
         &self,
         key_id: &str,
-    ) -> Result<Secret<Vec<u8>>, Error> {
+    ) -> Result<Secret<Vec<u8>>, Errors> {
         let path: String = self.secret_path(key_id);
         // Extract and decode the base64 share in steps: first get the string,
         // then decode to bytes, then drop JSON value.
@@ -106,7 +99,7 @@ impl VaultProvider for HashicorpVaultProvider {
             let value: Value =
                 match kv2::read(&self.client, &self.mount, &path).await {
                     Ok(data) => data,
-                    Err(_) => return Err(Error::KeyNotFound),
+                    Err(_) => return Err(Errors::KeyNotFound),
                 };
 
             // Decode base64 to bytes.
@@ -114,11 +107,11 @@ impl VaultProvider for HashicorpVaultProvider {
                 let share_b64: &str = value
                     .get(&self.field)
                     .and_then(|value: &Value| value.as_str())
-                    .ok_or(Error::InvalidKeyShare)?;
+                    .ok_or(Errors::InvalidKeyShare)?;
 
                 general_purpose::STANDARD
                     .decode(share_b64.as_bytes())
-                    .map_err(|_| Error::InvalidKeyShare)?
+                    .map_err(|_| Errors::InvalidKeyShare)?
             };
 
             bytes
@@ -143,7 +136,7 @@ impl VaultProvider for HashicorpVaultProvider {
         &self,
         key_id: &str,
         key_share: KeyShare,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Errors> {
         let path: String = self.secret_path(key_id);
 
         // Encode directly from reference, without cloning.
@@ -156,13 +149,13 @@ impl VaultProvider for HashicorpVaultProvider {
         if let Some(data) = data.as_object_mut() {
             data.insert(self.field.clone(), Value::String(share_b64));
         } else {
-            return Err(Error::VaultError);
+            return Err(Errors::VaultError);
         }
 
         // Store in Vault KV v2.
         match kv2::set(&self.client, &self.mount, &path, &data).await {
             Ok(_) => Ok(()),
-            Err(_) => Err(Error::VaultError),
+            Err(_) => Err(Errors::VaultError),
         }
     }
 }

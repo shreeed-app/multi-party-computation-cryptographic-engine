@@ -38,7 +38,7 @@ use crate::{
         },
     },
     transport::{
-        error::{Error, map_status},
+        errors::{Errors, map_status},
         grpc::node_client::NodeIpcClient,
     },
 };
@@ -55,8 +55,8 @@ pub struct FrostEd25519ControllerSigning {
     participants: u32,
     /// Message to be signed.
     message: Vec<u8>,
-    /// Peer clients for participant communication.
-    peers: Vec<NodeIpcClient>,
+    /// Node clients for participant communication.
+    nodes: Vec<NodeIpcClient>,
     /// Public key package for signature verification.
     public_key_package: PublicKeyPackage,
     /// Current protocol round.
@@ -78,7 +78,7 @@ impl FrostEd25519ControllerSigning {
     ///
     /// # Arguments
     /// * `protocol_init` (`ProtocolInit`) - Protocol initialization context.
-    /// * `peers` (`Vec<PeerIpcClient>`) - Peer clients for participant
+    /// * `nodes` (`Vec<NodeIpcClient>`) - Node clients for participant
     ///   communication.
     ///
     /// # Errors
@@ -89,16 +89,16 @@ impl FrostEd25519ControllerSigning {
     ///
     /// # Returns
     /// * `FrostEd25519ControllerSigning` - Initialized protocol instance.
-    pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Error> {
+    pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
         let init: ControllerSigningInit = match protocol_init {
             ProtocolInit::Signing(SigningInit::Controller(init)) => init,
-            _ => return Err(Error::InvalidProtocolInit),
+            _ => return Err(Errors::InvalidProtocolInit),
         };
 
         // Retrieve public key package from initialization context.
         let public_key_package: PublicKeyPackage =
             from_bytes(&init.public_key_package)
-                .map_err(|_| Error::InvalidMessage)?;
+                .map_err(|_| Errors::InvalidMessage)?;
 
         Ok(Self {
             algorithm: Algorithm::FrostEd25519,
@@ -107,7 +107,7 @@ impl FrostEd25519ControllerSigning {
             participants: init.common.participants,
             message: init.common.message,
             public_key_package,
-            peers: init.peers,
+            nodes: init.nodes,
             round: 0,
             sessions: HashMap::new(),
             commitments: BTreeMap::new(),
@@ -117,7 +117,7 @@ impl FrostEd25519ControllerSigning {
         })
     }
 
-    /// Helper method to extract participant IDs from peer clients.
+    /// Helper method to extract participant IDs from node clients.
     ///
     /// # Errors
     /// * `Error::InvalidParticipant` - If a participant ID is invalid or if no
@@ -125,25 +125,25 @@ impl FrostEd25519ControllerSigning {
     ///
     /// # Returns
     /// * `Vec<u32>` - Sorted list of participant IDs.
-    fn peer_identifiers(&self) -> Result<Vec<u32>, Error> {
+    fn node_identifiers(&self) -> Result<Vec<u32>, Errors> {
         let mut identifiers: Vec<u32> = self
-            .peers
+            .nodes
             .iter()
-            .map(|peer: &NodeIpcClient| {
-                peer.participant_id().ok_or(Error::InvalidParticipant)
+            .map(|node: &NodeIpcClient| {
+                node.participant_id().ok_or(Errors::InvalidParticipant)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         identifiers.sort();
 
         if identifiers.len() != self.participants as usize {
-            return Err(Error::InvalidParticipant);
+            return Err(Errors::InvalidParticipant);
         }
 
         Ok(identifiers)
     }
 
-    /// Helper method to get a mutable reference to a peer client by
+    /// Helper method to get a mutable reference to a node client by
     /// participant ID.
     ///
     /// # Arguments
@@ -156,17 +156,17 @@ impl FrostEd25519ControllerSigning {
     ///   communication.
     ///
     /// # Returns
-    /// * `&mut PeerIpcClient` - Mutable reference to the peer client.
-    fn peer_mut(
+    /// * `&mut NodeIpcClient` - Mutable reference to the node client.
+    fn node_mut(
         &mut self,
         identifier: u32,
-    ) -> Result<&mut NodeIpcClient, Error> {
-        self.peers
+    ) -> Result<&mut NodeIpcClient, Errors> {
+        self.nodes
             .iter_mut()
-            .find(|peer: &&mut NodeIpcClient| {
-                peer.participant_id() == Some(identifier)
+            .find(|node: &&mut NodeIpcClient| {
+                node.participant_id() == Some(identifier)
             })
-            .ok_or(Error::InvalidParticipant)
+            .ok_or(Errors::InvalidParticipant)
     }
 
     /// Helper method to create a scoped key ID for participant communication.
@@ -192,21 +192,21 @@ impl FrostEd25519ControllerSigning {
     /// # Returns
     /// * `()` - Nothing, but updates internal state with collected
     ///   commitments.
-    async fn collect_commitments(&mut self) -> Result<(), Error> {
-        let identifiers: Vec<u32> = self.peer_identifiers()?;
+    async fn collect_commitments(&mut self) -> Result<(), Errors> {
+        let identifiers: Vec<u32> = self.node_identifiers()?;
 
         let mut futures: FuturesUnordered<
-            impl Future<Output = Result<(u32, StartSessionResponse), Error>>,
+            impl Future<Output = Result<(u32, StartSessionResponse), Errors>>,
         > = FuturesUnordered::new();
 
         for identifier in identifiers {
-            let mut peer: NodeIpcClient = self
-                .peers
+            let mut node: NodeIpcClient = self
+                .nodes
                 .iter()
-                .find(|peer: &&NodeIpcClient| {
-                    peer.participant_id() == Some(identifier)
+                .find(|node: &&NodeIpcClient| {
+                    node.participant_id() == Some(identifier)
                 })
-                .ok_or(Error::InvalidParticipant)?
+                .ok_or(Errors::InvalidParticipant)?
                 .clone();
 
             let request: StartSigningSessionRequest =
@@ -223,8 +223,8 @@ impl FrostEd25519ControllerSigning {
 
             futures.push(async move {
                 let start: StartSessionResponse =
-                    peer.start_signing(request).await.map_err(map_status)?;
-                Ok::<_, Error>((identifier, start))
+                    node.start_signing(request).await.map_err(map_status)?;
+                Ok::<_, Errors>((identifier, start))
             });
         }
 
@@ -236,23 +236,23 @@ impl FrostEd25519ControllerSigning {
             self.sessions.insert(identifier, start.session_id);
 
             let wire: FrostWire = decode_wire(&start.payload)
-                .map_err(|_| Error::InvalidMessage)?;
+                .map_err(|_| Errors::InvalidMessage)?;
 
             match wire {
                 FrostWire::Commitments { identifier, commitments } => {
                     let identifier: Identifier = Identifier::try_from(
                         u16::try_from(identifier)
-                            .map_err(|_| Error::InvalidParticipant)?,
+                            .map_err(|_| Errors::InvalidParticipant)?,
                     )
-                    .map_err(|_| Error::InvalidParticipant)?;
+                    .map_err(|_| Errors::InvalidParticipant)?;
 
                     let commitments: SigningCommitments =
                         from_bytes(&commitments)
-                            .map_err(|_| Error::InvalidMessage)?;
+                            .map_err(|_| Errors::InvalidMessage)?;
 
                     self.commitments.insert(identifier, commitments);
                 },
-                _ => return Err(Error::InvalidMessage),
+                _ => return Err(Errors::InvalidMessage),
             }
         }
 
@@ -270,21 +270,21 @@ impl FrostEd25519ControllerSigning {
     /// # Returns
     /// * `()` - Nothing, but broadcasts the signing package to all
     ///   participants.
-    async fn broadcast_signing_package(&mut self) -> Result<(), Error> {
+    async fn broadcast_signing_package(&mut self) -> Result<(), Errors> {
         let signing_package: SigningPackage =
             SigningPackage::new(self.commitments.clone(), &self.message);
 
         let signing_package_bytes: Vec<u8> = to_allocvec(&signing_package)
-            .map_err(|_| Error::InvalidMessage)?;
+            .map_err(|_| Errors::InvalidMessage)?;
 
         let payload: Vec<u8> = encode_wire(&FrostWire::SigningPackage {
             signing_package: signing_package_bytes,
         })?;
 
         for (id, session_id) in self.sessions.clone() {
-            let peer: &mut NodeIpcClient = self.peer_mut(id)?;
+            let node: &mut NodeIpcClient = self.node_mut(id)?;
 
-            peer.submit_round(SubmitRoundRequest {
+            node.submit_round(SubmitRoundRequest {
                 session_id,
                 round: 1,
                 from: None,
@@ -310,12 +310,12 @@ impl FrostEd25519ControllerSigning {
     /// # Returns
     /// * `()` - Nothing, but updates internal state with collected signature
     ///   shares.
-    async fn collect_signature_shares(&mut self) -> Result<(), Error> {
+    async fn collect_signature_shares(&mut self) -> Result<(), Errors> {
         for (id, session_id) in self.sessions.clone() {
-            let peer: &mut NodeIpcClient = self.peer_mut(id)?;
+            let node: &mut NodeIpcClient = self.node_mut(id)?;
 
             // Request signature share from participant.
-            let response: SubmitRoundResponse = peer
+            let response: SubmitRoundResponse = node
                 .submit_round(SubmitRoundRequest {
                     session_id,
                     round: 2,
@@ -327,7 +327,7 @@ impl FrostEd25519ControllerSigning {
                 .map_err(map_status)?;
 
             let wire: FrostWire = decode_wire(&response.payload)
-                .map_err(|_| Error::InvalidMessage)?;
+                .map_err(|_| Errors::InvalidMessage)?;
 
             match wire {
                 FrostWire::SignatureShare { identifier, signature_share } => {
@@ -335,17 +335,17 @@ impl FrostEd25519ControllerSigning {
                     // signature share.
                     let identifier: Identifier = Identifier::try_from(
                         u16::try_from(identifier)
-                            .map_err(|_| Error::InvalidParticipant)?,
+                            .map_err(|_| Errors::InvalidParticipant)?,
                     )
-                    .map_err(|_| Error::InvalidParticipant)?;
+                    .map_err(|_| Errors::InvalidParticipant)?;
 
                     let share: SignatureShare =
                         from_bytes(&signature_share)
-                            .map_err(|_| Error::InvalidMessage)?;
+                            .map_err(|_| Errors::InvalidMessage)?;
 
                     self.shares.insert(identifier, share);
                 },
-                _ => return Err(Error::InvalidMessage),
+                _ => return Err(Errors::InvalidMessage),
             }
         }
 
@@ -360,7 +360,7 @@ impl FrostEd25519ControllerSigning {
     /// # Returns
     /// * `()` - Nothing, but updates internal state with final signature
     ///   output.
-    fn aggregate(&mut self) -> Result<(), Error> {
+    fn aggregate(&mut self) -> Result<(), Errors> {
         let signing_package: SigningPackage =
             SigningPackage::new(self.commitments.clone(), &self.message);
 
@@ -369,12 +369,12 @@ impl FrostEd25519ControllerSigning {
             &self.shares,
             &self.public_key_package,
         )
-        .map_err(|_| Error::InvalidSignature)?;
+        .map_err(|_| Errors::InvalidSignature)?;
 
         self.output = Some(ProtocolOutput::Signature(FinalSignature::Raw(
             match signature.serialize() {
                 Ok(bytes) => bytes.to_vec(),
-                Err(_) => return Err(Error::InvalidSignature),
+                Err(_) => return Err(Errors::InvalidSignature),
             },
         )));
 
@@ -420,9 +420,9 @@ impl Protocol for FrostEd25519ControllerSigning {
     ///
     /// # Errors
     /// * `Error::Aborted` - If the protocol has been aborted.
-    async fn next_round(&mut self) -> Result<Option<RoundMessage>, Error> {
+    async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Error::Aborted);
+            return Err(Errors::Aborted);
         }
 
         if self.round != 0 {
@@ -456,11 +456,11 @@ impl Protocol for FrostEd25519ControllerSigning {
     ///   round.
     ///
     /// # Returns
-    /// * `Option<RoundMessage>` - Message to send to orchestrator, if any.
+    /// * `Option<RoundMessage>` - Message to send to controller, if any.
     async fn handle_message(
         &mut self,
         _message: RoundMessage,
-    ) -> Result<Option<RoundMessage>, Error> {
+    ) -> Result<Option<RoundMessage>, Errors> {
         Ok(None)
     }
 
@@ -474,10 +474,10 @@ impl Protocol for FrostEd25519ControllerSigning {
     ///
     /// # Returns
     /// * `ProtocolOutput` - The final signature output.
-    async fn finalize(&mut self) -> Result<ProtocolOutput, Error> {
+    async fn finalize(&mut self) -> Result<ProtocolOutput, Errors> {
         self.output
             .take()
-            .ok_or(Error::InvalidState("Protocol not finished.".into()))
+            .ok_or(Errors::InvalidState("Protocol not finished.".into()))
     }
 
     /// Abort the protocol, preventing any further progress.

@@ -31,8 +31,8 @@ const MAXIMUM_WORKERS: usize = 2;
 
 /// Timeout duration for incoming messages.
 /// CGGMP24 assumes reliable delivery, but we still need a
-/// safety bound to avoid hanging forever if the orchestrator
-/// misbehaves or a peer disappears.
+/// safety bound to avoid hanging forever if the controller
+/// misbehaves or a node disappears.
 const INCOMING_MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Global semaphore used to limit concurrent CGGMP24 workers.
@@ -118,7 +118,7 @@ fn run_worker(worker: Worker) {
     let mut backoff: u64 = 1;
 
     // Important: messages delivered via `incoming_receiver` must preserve
-    // the order enforced by the orchestrator. Reordering would
+    // the order enforced by the controller. Reordering would
     // violate CGGMP24 protocol assumptions.
     loop {
         match state_machine.proceed() {

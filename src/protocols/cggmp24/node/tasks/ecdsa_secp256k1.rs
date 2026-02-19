@@ -45,7 +45,7 @@ use crate::{
             SigningInit,
         },
     },
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// CGGMP24 ECDSA Secp256k1 signing protocol instance.
@@ -86,14 +86,14 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
     ///
     /// # Returns
     /// * `Result<Self, Error>` - New protocol instance or error.
-    pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Error> {
+    pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
         let init: NodeSigningInit = match protocol_init {
             ProtocolInit::Signing(SigningInit::Node(init)) => init,
-            _ => return Err(Error::InvalidProtocolInit),
+            _ => return Err(Errors::InvalidProtocolInit),
         };
 
         if init.common.algorithm != Algorithm::Cggmp24EcdsaSecp256k1 {
-            return Err(Error::UnsupportedAlgorithm(
+            return Err(Errors::UnsupportedAlgorithm(
                 init.common.algorithm.as_str().into(),
             ));
         }
@@ -105,39 +105,39 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
                         bytes,
                     ) {
                         Ok(archived) => archived,
-                        Err(_) => return Err(Error::InvalidKeyShare),
+                        Err(_) => return Err(Errors::InvalidKeyShare),
                     };
                 deserialize::<Cggmp24StoredKey, RkyvError>(archived)
-                    .map_err(|_| Error::InvalidKeyShare)
+                    .map_err(|_| Errors::InvalidKeyShare)
             })?;
 
         let key_share: KeyShare<CggmpSecp256k1> =
             from_slice(&stored.key_share_json)
-                .map_err(|_| Error::InvalidKeyShare)?;
+                .map_err(|_| Errors::InvalidKeyShare)?;
 
         if init.common.message.len() != 32 {
-            return Err(Error::InvalidMessage);
+            return Err(Errors::InvalidMessage);
         }
 
         // Validate threshold and participants.
         if init.common.threshold == 0
             || init.common.threshold > init.common.participants
         {
-            return Err(Error::InvalidThreshold);
+            return Err(Errors::InvalidThreshold);
         }
 
         // Deterministic signer selection for CGGMP24.
         //
         // Context: CGGMP24 requires the exact set of signing participants
         // ("parties") to be known the protocol starts. Unlike Frost, there is
-        // no protocol message where the orchestrator can announce who signs.
+        // no protocol message where the controller can announce who signs.
         //
         // In this system, `ProtocolInit` is shared across all protocols and
         // does not contain a list of signing participants. To keep the API
         // uniform and avoid protocol-specific configuration, we rely on a
         // deterministic convention.
         //
-        // The orchestrator starts the signing session on all nodes.
+        // The controller starts the signing session on all nodes.
         // All nodes know, the total number of participants (`participants`),
         // the signing threshold (`threshold`), the global key identifier
         // (`key_id`). From these public values, every node independently
@@ -173,12 +173,12 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
         let bytes: [u8; 8] = digest
             .get(0..8)
             .and_then(|slice: &[u8]| slice.try_into().ok())
-            .ok_or(Error::InvalidMessage)?;
+            .ok_or(Errors::InvalidMessage)?;
 
         let start: u16 = u16::try_from(
             u64::from_be_bytes(bytes) % init.common.participants as u64,
         )
-        .map_err(|_| Error::InvalidMessage)?;
+        .map_err(|_| Errors::InvalidMessage)?;
 
         // Build the signer set as `threshold` consecutive
         // participant identifiers.
@@ -186,9 +186,9 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
             Vec::with_capacity(init.common.threshold as usize);
         for index in 0..init.common.threshold {
             let party_id: u16 = (start
-                + u16::try_from(index).map_err(|_| Error::InvalidMessage)?)
+                + u16::try_from(index).map_err(|_| Errors::InvalidMessage)?)
                 % u16::try_from(init.common.participants)
-                    .map_err(|_| Error::InvalidMessage)?;
+                    .map_err(|_| Errors::InvalidMessage)?;
             parties.push(party_id);
         }
 
@@ -196,11 +196,11 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
         parties.sort();
 
         // Sanity check: the local participant must be part of the signer set.
-        // If this check fails, it means the orchestrator violated the MPC
+        // If this check fails, it means the controller violated the MPC
         // contract by starting a signing session on a node that is not
         // selected by the deterministic signer selection rule.
         if !parties.contains(&stored.identifier) {
-            return Err(Error::InvalidParticipant);
+            return Err(Errors::InvalidParticipant);
         }
 
         // Prepare data to be signed as a digest.
@@ -265,10 +265,10 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
     fn wrap_outgoing(
         &mut self,
         outgoing: Outgoing<CggmpSigningMessage>,
-    ) -> Result<RoundMessage, Error> {
+    ) -> Result<RoundMessage, Errors> {
         // Serialize the CGGMP message.
         let inner: Vec<u8> =
-            to_vec(&outgoing.msg).map_err(|_| Error::InvalidMessage)?;
+            to_vec(&outgoing.msg).map_err(|_| Errors::InvalidMessage)?;
 
         // Wrap into CGGMP24 wire format.
         let wire: Cggmp24Wire =
@@ -349,9 +349,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
     ///
     /// # Returns
     /// * `Option<RoundMessage>` - Message to send for the next round, if any.
-    async fn next_round(&mut self) -> Result<Option<RoundMessage>, Error> {
+    async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Error::Aborted);
+            return Err(Errors::Aborted);
         }
 
         // Try to receive an outgoing message from the worker.
@@ -369,16 +369,16 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
     /// Process an incoming round message and advance the protocol state.
     ///
     /// # Arguments
-    /// * `message` (`RoundMessage`) - Message received from another peer.
+    /// * `message` (`RoundMessage`) - Message received from another node.
     ///
     /// # Returns
     /// * `Option<RoundMessage>` - Message to broadcast for the next round
     async fn handle_message(
         &mut self,
         round_message: RoundMessage,
-    ) -> Result<Option<RoundMessage>, Error> {
+    ) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Error::Aborted);
+            return Err(Errors::Aborted);
         }
 
         // Decode the incoming round message payload.
@@ -386,13 +386,13 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
             decode_wire(&round_message.payload)?;
         // Deserialize the CGGMP message.
         let message: CggmpSigningMessage =
-            from_slice(&payload).map_err(|_| Error::InvalidMessage)?;
+            from_slice(&payload).map_err(|_| Errors::InvalidMessage)?;
 
         let sender_u16: u16 = round_message
             .from
-            .ok_or(Error::InvalidMessage)?
+            .ok_or(Errors::InvalidMessage)?
             .try_into()
-            .map_err(|_| Error::InvalidMessage)?;
+            .map_err(|_| Errors::InvalidMessage)?;
 
         let incoming: Incoming<Msg<CggmpSecp256k1, Sha256>> = Incoming {
             id: round_message.round as MsgId,
@@ -409,7 +409,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
         // Send the incoming message to the worker.
         self.incoming_transmitter
             .send(incoming)
-            .map_err(|_| Error::Aborted)?;
+            .map_err(|_| Errors::Aborted)?;
 
         // Check if there are pending outputs first, return them before
         // checking outgoing channel.
@@ -425,7 +425,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
     ///
     /// # Returns
     /// * `ProtocolOutput` - Final signature output.
-    async fn finalize(&mut self) -> Result<ProtocolOutput, Error> {
+    async fn finalize(&mut self) -> Result<ProtocolOutput, Errors> {
         match self.done_receiver.recv() {
             Ok(WorkerDone::Ok(signature)) => {
                 // Convert k256 signature to r, s, v components.
@@ -434,24 +434,24 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                     .to_be_bytes()
                     .as_bytes()
                     .try_into()
-                    .map_err(|_| Error::InvalidSignature)?;
+                    .map_err(|_| Errors::InvalidSignature)?;
 
                 let s: [u8; 32] = signature
                     .s
                     .to_be_bytes()
                     .as_bytes()
                     .try_into()
-                    .map_err(|_| Error::InvalidSignature)?;
+                    .map_err(|_| Errors::InvalidSignature)?;
 
                 // Reconstruct K256 signature.
                 let signature: K256Signature =
                     K256Signature::from_scalars(r, s)
-                        .map_err(|_| Error::InvalidSignature)?;
+                        .map_err(|_| Errors::InvalidSignature)?;
 
                 // Reconstruct verifying key from public key bytes.
                 let verifying_key: VerifyingKey =
                     VerifyingKey::from_sec1_bytes(&self.public_key_bytes)
-                        .map_err(|_| Error::InvalidSignature)?;
+                        .map_err(|_| Errors::InvalidSignature)?;
 
                 // Recover recovery identifier.
                 let recovery_id: RecoveryId =
@@ -460,7 +460,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                         &self.message_bytes,
                         &signature,
                     )
-                    .map_err(|_| Error::InvalidSignature)?;
+                    .map_err(|_| Errors::InvalidSignature)?;
 
                 Ok(ProtocolOutput::Signature(FinalSignature::Ecdsa(
                     EcdsaSignature {
@@ -470,7 +470,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                     },
                 )))
             },
-            _ => Err(Error::FailedToSign),
+            _ => Err(Errors::FailedToSign),
         }
     }
 

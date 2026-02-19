@@ -5,7 +5,7 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
-/// Wire messages exchanged between orchestrator and peer
+/// Wire messages exchanged between controller and node
 /// for CGGMP24 ECDSA protocol.
 #[derive(Debug, PartialEq, Archive, Serialize, Deserialize)]
 #[repr(u8)]

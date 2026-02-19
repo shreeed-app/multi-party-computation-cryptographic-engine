@@ -1,0 +1,28 @@
+# Controller configuration file.
+
+[ipc]
+# Address where the controller IPC server listens.
+address = "127.0.0.1:6000"
+
+# Logical identifier of the controller service.
+service_id = "controller"
+
+[ipc.auth]
+# Shared token expected by peer nodes for authentication.
+token = "0"
+
+# Peer nodes to connect to.
+[[peers]]
+endpoint = "http://127.0.0.1:50051"
+participant_id = 1
+auth_token = "1"
+
+[[peers]]
+endpoint = "http://127.0.0.1:50052"
+participant_id = 2
+auth_token = "2"
+
+[[peers]]
+endpoint = "http://127.0.0.1:50053"
+participant_id = 3
+auth_token = "3"

@@ -5,8 +5,8 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
-/// Wire messages exchanged between orchestrator and peer
-/// for any FROST-based protocol.
+/// Wire messages exchanged between controller and node for any FROST-based
+/// protocol.
 #[derive(Debug, PartialEq, Archive, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum FrostWire {

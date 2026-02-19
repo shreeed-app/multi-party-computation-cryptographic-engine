@@ -1,4 +1,4 @@
-//! gRPC client for communicating with peer nodes.
+//! gRPC client for communicating with nodes.
 
 use std::time::Duration;
 
@@ -7,6 +7,7 @@ use tonic::{
     Status,
     transport::{Channel, Endpoint, Error},
 };
+use tracing::instrument;
 
 use crate::{
     auth::identity::Identity,
@@ -20,35 +21,35 @@ use crate::{
         StartSigningSessionRequest,
         SubmitRoundRequest,
         SubmitRoundResponse,
-        peer_client::PeerClient,
+        node_client::NodeClient,
     },
     transport::grpc::middleware::inject_identity,
 };
 
-/// gRPC client used by the orchestrator to communicate with peers.
+/// gRPC client used by the controller to communicate with nodes.
 #[derive(Clone, Debug)]
 pub struct NodeIpcClient {
-    /// The gRPC endpoint of the peer.
+    /// The gRPC endpoint of the node.
     endpoint: String,
-    /// The identity to use for authentication with the peer.
+    /// The identity to use for authentication with the node.
     identity: Identity,
-    /// The participant ID of the peer.
+    /// The participant ID of the node.
     participant_id: u32,
     /// The inner gRPC client, lazily initialized on first use.
-    inner: Option<PeerClient<Channel>>,
+    inner: Option<NodeClient<Channel>>,
 }
 
 impl NodeIpcClient {
-    /// Connect to a peer gRPC endpoint.
+    /// Connect to a node gRPC endpoint.
     ///
     /// # Arguments
-    /// * `endpoint` (`String`) - The gRPC endpoint of the peer to connect to.
+    /// * `endpoint` (`String`) - The gRPC endpoint of the node to connect to.
     /// * `identity` (`Identity`) - The identity to use for authentication with
-    ///   the peer.
-    /// * `participant_id` (`u32`) - The participant ID of the peer.
+    ///   the node.
+    /// * `participant_id` (`u32`) - The participant ID of the node.
     ///
     /// # Returns
-    /// * `PeerIpcClient` - A new instance of the peer gRPC client.
+    /// * `NodeIpcClient` - A new instance of the node gRPC client.
     pub fn new(
         endpoint: String,
         identity: Identity,
@@ -57,10 +58,10 @@ impl NodeIpcClient {
         Self { endpoint, identity, participant_id, inner: None }
     }
 
-    /// Get the participant ID of this peer client.
+    /// Get the participant ID of this node client.
     ///
     /// # Returns
-    /// * `Option<u32>` - The participant ID if this client represents a peer,
+    /// * `Option<u32>` - The participant ID if this client represents a node,
     ///   or `None` if it does not.
     pub fn participant_id(&self) -> Option<u32> {
         Some(self.participant_id)
@@ -83,7 +84,7 @@ impl NodeIpcClient {
             .connect()
             .await?;
 
-        self.inner = Some(PeerClient::new(channel));
+        self.inner = Some(NodeClient::new(channel));
         Ok(())
     }
 
@@ -95,12 +96,13 @@ impl NodeIpcClient {
     /// lazily initialize the gRPC client connection.
     ///
     /// # Returns
-    /// * `Result<&mut PeerClient<Channel>, Status>` - A mutable reference to
+    /// * `Result<&mut NodeClient<Channel>, Status>` - A mutable reference to
     ///   the initialized gRPC client, or an error status if the connection
     ///   fails.
+    #[instrument(skip(self))]
     async fn get_client(
         &mut self,
-    ) -> Result<&mut PeerClient<Channel>, Status> {
+    ) -> Result<&mut NodeClient<Channel>, Status> {
         self.ensure_connected()
             .await
             .map_err(|error: Error| Status::unavailable(error.to_string()))?;
@@ -110,7 +112,7 @@ impl NodeIpcClient {
             .ok_or_else(|| Status::internal("Client not initialized."))
     }
 
-    /// Start a key generation session on a peer.
+    /// Start a key generation session on a node.
     ///
     /// # Arguments
     ///  * `request` (`StartKeyGenerationSessionRequest`) - The request
@@ -118,13 +120,14 @@ impl NodeIpcClient {
     ///
     /// # Returns
     ///  * `Result<StartSessionResponse, Status>` - A result containing the
-    ///    response from the peer or an error status if the request failed.
+    ///    response from the node or an error status if the request failed.
+    #[instrument(skip(self, request))]
     pub async fn start_key_generation(
         &mut self,
         request: StartKeyGenerationSessionRequest,
     ) -> Result<StartSessionResponse, Status> {
         let identity: Identity = self.identity.clone();
-        let client: &mut PeerClient<Channel> = self.get_client().await?;
+        let client: &mut NodeClient<Channel> = self.get_client().await?;
 
         let request: Request<StartKeyGenerationSessionRequest> =
             inject_identity(Request::new(request), identity);
@@ -138,7 +141,7 @@ impl NodeIpcClient {
         }
     }
 
-    /// Start a signing session on a peer.
+    /// Start a signing session on a node.
     ///
     /// # Arguments
     ///  * `request` (`StartSigningSessionRequest`) - The request containing
@@ -146,13 +149,14 @@ impl NodeIpcClient {
     ///
     /// # Returns
     /// * `Result<StartSessionResponse, Status>` - A result containing the
-    ///   response from the peer or an error status if the request failed.
+    ///   response from the node or an error status if the request failed.
+    #[instrument(skip(self, request))]
     pub async fn start_signing(
         &mut self,
         request: StartSigningSessionRequest,
     ) -> Result<StartSessionResponse, Status> {
         let identity: Identity = self.identity.clone();
-        let client: &mut PeerClient<Channel> = self.get_client().await?;
+        let client: &mut NodeClient<Channel> = self.get_client().await?;
 
         let request: Request<StartSigningSessionRequest> =
             inject_identity(Request::new(request), identity);
@@ -166,7 +170,7 @@ impl NodeIpcClient {
         }
     }
 
-    /// Submit a round message to a peer.
+    /// Submit a round message to a node.
     ///
     /// # Arguments
     /// * `request` (`SubmitRoundRequest`) - The request containing the round
@@ -174,13 +178,14 @@ impl NodeIpcClient {
     ///
     /// # Returns
     /// * `Result<SubmitRoundResponse, Status>` - A result containing the
-    ///   response from the peer or an error status if the request failed.
+    ///   response from the node or an error status if the request failed.
+    #[instrument(skip(self, request), fields(session_id = %request.session_id))]
     pub async fn submit_round(
         &mut self,
         request: SubmitRoundRequest,
     ) -> Result<SubmitRoundResponse, Status> {
         let identity: Identity = self.identity.clone();
-        let client: &mut PeerClient<Channel> = self.get_client().await?;
+        let client: &mut NodeClient<Channel> = self.get_client().await?;
 
         let request: Request<SubmitRoundRequest> =
             inject_identity(Request::new(request), identity);
@@ -194,20 +199,21 @@ impl NodeIpcClient {
         }
     }
 
-    /// Finalize a session on a peer.
+    /// Finalize a session on a node.
     ///
     /// # Arguments
     /// * `session_id` (`String`) - The ID of the session to finalize.
     ///
     /// # Returns
     /// * `Result<FinalizeSessionResponse, Status>` - A result containing the
-    ///   response from the peer or an error status if the request failed.
+    ///   response from the node or an error status if the request failed.
+    #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn finalize(
         &mut self,
         session_id: String,
     ) -> Result<FinalizeSessionResponse, Status> {
         let identity: Identity = self.identity.clone();
-        let client: &mut PeerClient<Channel> = self.get_client().await?;
+        let client: &mut NodeClient<Channel> = self.get_client().await?;
 
         let request: Request<FinalizeSessionRequest> = inject_identity(
             Request::new(FinalizeSessionRequest { session_id }),
@@ -223,20 +229,21 @@ impl NodeIpcClient {
         }
     }
 
-    /// Abort a session on a peer.
+    /// Abort a session on a node.
     ///
     /// # Arguments
     /// * `session_id` (`String`) - The ID of the session to abort.
     ///
     /// # Returns
     /// * `Result<AbortSessionResponse, Status>` - A result containing the
-    ///   response from the peer or an error status if the request failed.
+    ///   response from the node or an error status if the request failed.
+    #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn abort_session(
         &mut self,
         session_id: String,
     ) -> Result<AbortSessionResponse, Status> {
         let identity: Identity = self.identity.clone();
-        let client: &mut PeerClient<Channel> = self.get_client().await?;
+        let client: &mut NodeClient<Channel> = self.get_client().await?;
 
         let request: Request<AbortSessionRequest> = inject_identity(
             Request::new(AbortSessionRequest { session_id }),

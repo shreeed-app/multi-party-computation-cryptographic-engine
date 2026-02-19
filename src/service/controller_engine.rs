@@ -1,12 +1,13 @@
 //! Controller-side engine implementing EngineApi.
 //!
-//! Unlike the peer engine, the controller executes the full
+//! Unlike the node engine, the controller executes the full
 //! distributed protocol inside `start_session` and stores
 //! the final result in-memory until `finalize` is called.
 
 use std::{collections::HashMap, sync::RwLock};
 
 use async_trait::async_trait;
+use tracing::instrument;
 
 use crate::{
     auth::session::identifier::SessionId,
@@ -16,7 +17,7 @@ use crate::{
         types::{ProtocolInit, ProtocolOutput, RoundMessage},
     },
     service::api::EngineApi,
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// Controller engine.
@@ -49,10 +50,11 @@ impl EngineApi for ControllerEngine {
     /// # Returns
     /// * `(SessionId, RoundMessage)` - Session identifier and initial round
     ///   message (empty for controller since it executes synchronously).
+    #[instrument(skip(self, init))]
     async fn start_session(
         &self,
         init: ProtocolInit,
-    ) -> Result<(SessionId, RoundMessage), Error> {
+    ) -> Result<(SessionId, RoundMessage), Errors> {
         let mut protocol: Box<dyn Protocol> = ProtocolFactory::create(init)?;
 
         // Execute full orchestration
@@ -63,7 +65,7 @@ impl EngineApi for ControllerEngine {
 
         self.outputs
             .write()
-            .map_err(|_| Error::LiveLockAcquireError)?
+            .map_err(|_| Errors::LiveLockAcquireError)?
             .insert(session_id, output);
 
         // Controller does not use RoundMessage.
@@ -85,8 +87,8 @@ impl EngineApi for ControllerEngine {
         &self,
         _session_id: SessionId,
         _message: RoundMessage,
-    ) -> Result<RoundMessage, Error> {
-        Err(Error::UnsupportedAlgorithm(
+    ) -> Result<RoundMessage, Errors> {
+        Err(Errors::UnsupportedAlgorithm(
             "Controller does not support incremental rounds.".into(),
         ))
     }
@@ -104,15 +106,16 @@ impl EngineApi for ControllerEngine {
     ///
     /// # Returns
     /// * `ProtocolOutput` - Final protocol output stored from start_session.
+    #[instrument(skip(self), fields(session_id = %session_id))]
     async fn finalize(
         &self,
         session_id: SessionId,
-    ) -> Result<ProtocolOutput, Error> {
+    ) -> Result<ProtocolOutput, Errors> {
         self.outputs
             .write()
-            .map_err(|_| Error::LiveLockAcquireError)?
+            .map_err(|_| Errors::LiveLockAcquireError)?
             .remove(&session_id)
-            .ok_or_else(|| Error::SessionNotFound(session_id.to_string()))
+            .ok_or_else(|| Errors::SessionNotFound(session_id.to_string()))
     }
 
     /// Abort removes stored output.
@@ -127,10 +130,11 @@ impl EngineApi for ControllerEngine {
     ///
     /// # Returns
     /// * `()` - Unit.
-    async fn abort(&self, session_id: SessionId) -> Result<(), Error> {
+    #[instrument(skip(self), fields(session_id = %session_id))]
+    async fn abort(&self, session_id: SessionId) -> Result<(), Errors> {
         self.outputs
             .write()
-            .map_err(|_| Error::LiveLockAcquireError)?
+            .map_err(|_| Errors::LiveLockAcquireError)?
             .remove(&session_id);
 
         Ok(())

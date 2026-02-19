@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     auth::session::{identifier::SessionId, state::SessionState},
-    transport::error::Error,
+    transport::errors::Errors,
 };
 
 /// This store is process-local and not persistent.
@@ -74,20 +74,20 @@ impl SessionStore {
     ///
     /// # Returns
     /// * `R` - Returns the result of the closure on success.
-    pub fn with_session<F, R>(&self, id: SessionId, f: F) -> Result<R, Error>
+    pub fn with_session<F, R>(&self, id: SessionId, f: F) -> Result<R, Errors>
     where
-        F: FnOnce(&mut SessionState) -> Result<R, Error>,
+        F: FnOnce(&mut SessionState) -> Result<R, Errors>,
     {
         let mut guard: RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>> =
             Self::write_guard(&self.sessions);
 
         let entry: &mut SessionEntry = guard
             .get_mut(&id)
-            .ok_or(Error::SessionNotFound(id.to_string()))?;
+            .ok_or(Errors::SessionNotFound(id.to_string()))?;
 
         if entry.last_updated.elapsed() > self.ttl {
             guard.remove(&id);
-            return Err(Error::SessionNotFound(id.to_string()));
+            return Err(Errors::SessionNotFound(id.to_string()));
         }
 
         let result: R = f(&mut entry.state)?;

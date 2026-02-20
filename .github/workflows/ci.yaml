@@ -1,4 +1,4 @@
-name: Continuous Integration
+name: Continuous integration
 
 on:
   push:
@@ -20,12 +20,15 @@ env:
 
 jobs:
   ci:
+    name: Continuous integration
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
           components: rustfmt, clippy
@@ -33,9 +36,11 @@ jobs:
       - name: Ensure cargo in PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
 
-      - uses: cargo-bins/cargo-binstall@main
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
 
       - name: Install dependencies
         run: |
@@ -46,9 +51,10 @@ jobs:
             cargo-dylint \
             dylint-link
 
-      - uses: arduino/setup-protoc@v3
+      - name: Setup Protoc
+        uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run CI
+      - name: Run continuous integration tasks
         run: cargo make ci

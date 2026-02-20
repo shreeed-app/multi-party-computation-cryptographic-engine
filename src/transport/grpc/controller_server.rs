@@ -66,7 +66,10 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
     /// # Returns
     /// * `GenerateKeyResponse` - The response containing the generated public
     ///   key.
-    #[instrument(skip(self, request))]
+    #[instrument(skip(self, request), fields(
+        key_id = %request.get_ref().key_id,
+        algorithm = %request.get_ref().algorithm,
+    ))]
     async fn generate_key(
         &self,
         request: Request<GenerateKeyRequest>,
@@ -77,9 +80,10 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
             match Algorithm::from_str(&request.algorithm) {
                 Ok(algorithm) => algorithm,
                 Err(_) => {
-                    return Err(Status::from(Errors::UnsupportedAlgorithm(
+                    return Err(Errors::UnsupportedAlgorithm(
                         request.algorithm.clone(),
-                    )));
+                    )
+                    .into());
                 },
             };
 
@@ -96,11 +100,10 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
 
         // Start controller session.
         let (session_id, _): (SessionId, RoundMessage) =
-            self.engine.start_session(init).await.map_err(Status::from)?;
+            self.engine.start_session(init).await?;
 
         // Immediately finalize (controller runs fully inside start_session).
-        let output: ProtocolOutput =
-            self.engine.finalize(session_id).await.map_err(Status::from)?;
+        let output: ProtocolOutput = self.engine.finalize(session_id).await?;
 
         match output {
             ProtocolOutput::KeyGeneration {
@@ -114,7 +117,9 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
                 }),
             })),
 
-            _ => Err(Status::internal("Invalid protocol output.")),
+            _ => {
+                Err(Errors::Internal("Invalid protocol output.".into()).into())
+            },
         }
     }
 
@@ -130,7 +135,10 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
     ///
     /// # Returns
     /// * `SignResponse` - The response containing the final signature.
-    #[instrument(skip(self, request))]
+    #[instrument(skip(self, request), fields(
+        key_id = %request.get_ref().key_id,
+        algorithm = %request.get_ref().algorithm,
+    ))]
     async fn sign(
         &self,
         request: Request<SignRequest>,
@@ -143,9 +151,9 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
                     key_id: request.key_id.clone(),
                     algorithm: Algorithm::from_str(&request.algorithm)
                         .map_err(|_| {
-                            Status::from(Errors::UnsupportedAlgorithm(
+                            Errors::UnsupportedAlgorithm(
                                 request.algorithm.clone(),
-                            ))
+                            )
                         })?,
                     threshold: request.threshold,
                     participants: request.participants,
@@ -157,10 +165,9 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
         );
 
         let (session_id, _): (SessionId, RoundMessage) =
-            self.engine.start_session(init).await.map_err(Status::from)?;
+            self.engine.start_session(init).await?;
 
-        let output: ProtocolOutput =
-            self.engine.finalize(session_id).await.map_err(Status::from)?;
+        let output: ProtocolOutput = self.engine.finalize(session_id).await?;
 
         match output {
             ProtocolOutput::Signature(signature) => {
@@ -171,7 +178,9 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
                 }))
             },
 
-            _ => Err(Status::internal("Invalid protocol output.")),
+            _ => {
+                Err(Errors::Internal("Invalid protocol output.".into()).into())
+            },
         }
     }
 
@@ -193,10 +202,10 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
 
         let session_id: SessionId = SessionId::parse(&request.session_id)
             .ok_or_else(|| {
-                Status::from(Errors::SessionNotFound(request.session_id))
+                Errors::SessionNotFound(request.session_id.clone())
             })?;
 
-        self.engine.abort(session_id).await.map_err(Status::from)?;
+        self.engine.abort(session_id).await?;
 
         Ok(Response::new(AbortResponse {}))
     }

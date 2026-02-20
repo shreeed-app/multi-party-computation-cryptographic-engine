@@ -6,8 +6,7 @@ use serde::Deserialize;
 use toml::{de::Error as TomlError, from_str};
 
 use crate::{
-    auth::ipc::config::NodeIpcConfig,
-    config::api::RuntimeConfig,
+    config::{api::RuntimeConfig, ipc::NodeIpcConfig},
     secrets::vault::config::VaultConfig,
     transport::errors::Errors,
 };

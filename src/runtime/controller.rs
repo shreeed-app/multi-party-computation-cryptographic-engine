@@ -1,18 +1,23 @@
 //! Controller runtime module.
 
-use std::net::{AddrParseError, SocketAddr};
+use std::{
+    net::{AddrParseError, SocketAddr},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use tonic::transport::{Error as TransportError, Server};
+use tonic_middleware::RequestInterceptorLayer;
 use tonic_reflection::server::{
     Builder as ReflectionBuilder,
     Error as ReflectionError,
     v1::{ServerReflection, ServerReflectionServer},
 };
+use tower::{limit::ConcurrencyLimitLayer, timeout::TimeoutLayer};
 
 use crate::{
-    auth::identity::Identity,
-    config::controller::{ControllerRuntimeConfig, NodeConfig},
+    auth::bearer_server::BearerAuthInterceptor,
+    config::controller::ControllerRuntimeConfig,
     logging::engine::LoggingEngine,
     proto::{
         FILE_DESCRIPTOR_SET,
@@ -57,30 +62,27 @@ impl RuntimeApi for ControllerRuntime {
         );
 
         // Create nodes clients for each configured node.
-        let nodes: Vec<NodeIpcClient> = config
-            .nodes
-            .into_iter()
-            .map(|node_config: NodeConfig| {
-                NodeIpcClient::new(
-                    node_config.endpoint,
-                    Identity::Controller {
-                        service_id: config.ipc.service_id.clone(),
-                    },
-                    node_config.participant_id,
-                )
-            })
-            .collect();
+        let nodes: Vec<NodeIpcClient> =
+            config.nodes.into_iter().map(NodeIpcClient::new).collect();
+        tracing::debug!("Created node clients for configured nodes.");
 
         // Create the gRPC server for the controller, injecting the controller
         // engine and node clients.
         let server: ControllerIpcServer<ControllerEngine> =
             ControllerIpcServer::new(ControllerEngine::default(), nodes);
+        tracing::debug!("Initialized controller IPC server.");
 
         // Parse the controller's IPC server address from configuration.
         let address: SocketAddr =
             config.ipc.address.parse().map_err(|error: AddrParseError| {
                 Errors::ConfigError(error.to_string())
             })?;
+        tracing::debug!(%address, "Parsed controller IPC server address.");
+
+        let auth_layer: RequestInterceptorLayer<BearerAuthInterceptor> =
+            RequestInterceptorLayer::new(BearerAuthInterceptor::new(
+                config.ipc.auth.token.clone(),
+            ));
 
         let reflection_service: ServerReflectionServer<impl ServerReflection> =
             ReflectionBuilder::configure()
@@ -89,9 +91,13 @@ impl RuntimeApi for ControllerRuntime {
                 .map_err(|error: ReflectionError| {
                     Errors::ConfigError(error.to_string())
                 })?;
+        tracing::debug!("Configured gRPC reflection service.");
 
         // Start the gRPC server and serve requests.
         Server::builder()
+            .layer(ConcurrencyLimitLayer::new(100))
+            .layer(TimeoutLayer::new(Duration::from_secs(10)))
+            .layer(auth_layer)
             .add_service(reflection_service)
             .add_service(ControllerServer::new(server))
             .serve(address)

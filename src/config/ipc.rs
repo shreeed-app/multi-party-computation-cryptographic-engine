@@ -3,7 +3,7 @@
 use serde::Deserialize;
 
 /// IPC runtime configuration for the node.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct NodeIpcConfig {
     /// Logical node identifier (used for scoping).
     pub node_id: String,
@@ -18,7 +18,7 @@ pub struct NodeIpcConfig {
 }
 
 /// IPC runtime configuration for the controller.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ControllerIpcConfig {
     /// IPC server address (e.g. "[::1]:50051").
     pub address: String,
@@ -29,7 +29,7 @@ pub struct ControllerIpcConfig {
 }
 
 /// IPC authentication configuration.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct AuthConfig {
     /// Shared secret or token for IPC authentication.
     pub token: String,

@@ -2,8 +2,6 @@
 //! the signer engine. It includes components for inter-process communication
 //! authentication and session lifecycle management.
 
-pub mod context;
-pub mod identity;
-pub mod ipc;
-pub mod policy;
+pub mod bearer_client;
+pub mod bearer_server;
 pub mod session;

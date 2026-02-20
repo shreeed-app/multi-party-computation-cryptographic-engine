@@ -11,6 +11,7 @@ use crate::{
 pub type Round = u32;
 
 /// Protocol initialization context.
+#[derive(Debug)]
 pub enum ProtocolInit {
     /// Key generation protocol initialization.
     KeyGeneration(KeyGenerationInit),
@@ -18,6 +19,7 @@ pub enum ProtocolInit {
     Signing(SigningInit),
 }
 
+#[derive(Debug)]
 /// Signing protocol initialization context.
 pub enum SigningInit {
     /// Node participant signing protocol initialization.
@@ -26,6 +28,7 @@ pub enum SigningInit {
     Controller(ControllerSigningInit),
 }
 
+#[derive(Debug)]
 /// Key generation protocol initialization context.
 pub enum KeyGenerationInit {
     /// Node participant key generation protocol initialization.

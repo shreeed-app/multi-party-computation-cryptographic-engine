@@ -5,12 +5,14 @@ use std::time::Duration;
 use tonic::{
     Request,
     Status,
+    service::interceptor::InterceptedService,
     transport::{Channel, Endpoint, Error},
 };
 use tracing::instrument;
 
 use crate::{
-    auth::identity::Identity,
+    auth::bearer_client::ClientAuthInterceptor,
+    config::controller::NodeConfig,
     proto::signer::v1::{
         AbortSessionRequest,
         AbortSessionResponse,
@@ -23,39 +25,30 @@ use crate::{
         SubmitRoundResponse,
         node_client::NodeClient,
     },
-    transport::grpc::middleware::inject_identity,
+    transport::errors::Errors,
 };
 
 /// gRPC client used by the controller to communicate with nodes.
 #[derive(Clone, Debug)]
 pub struct NodeIpcClient {
     /// The gRPC endpoint of the node.
-    endpoint: String,
-    /// The identity to use for authentication with the node.
-    identity: Identity,
-    /// The participant ID of the node.
-    participant_id: u32,
+    config: NodeConfig,
     /// The inner gRPC client, lazily initialized on first use.
-    inner: Option<NodeClient<Channel>>,
+    inner:
+        Option<NodeClient<InterceptedService<Channel, ClientAuthInterceptor>>>,
 }
 
 impl NodeIpcClient {
     /// Connect to a node gRPC endpoint.
     ///
     /// # Arguments
-    /// * `endpoint` (`String`) - The gRPC endpoint of the node to connect to.
-    /// * `identity` (`Identity`) - The identity to use for authentication with
-    ///   the node.
-    /// * `participant_id` (`u32`) - The participant ID of the node.
+    /// * `config` (`NodeConfig`) - The configuration for the node connection,
+    ///  including the endpoint, participant ID, and authentication token.
     ///
     /// # Returns
     /// * `NodeIpcClient` - A new instance of the node gRPC client.
-    pub fn new(
-        endpoint: String,
-        identity: Identity,
-        participant_id: u32,
-    ) -> Self {
-        Self { endpoint, identity, participant_id, inner: None }
+    pub fn new(config: NodeConfig) -> Self {
+        Self { config, inner: None }
     }
 
     /// Get the participant ID of this node client.
@@ -64,7 +57,7 @@ impl NodeIpcClient {
     /// * `Option<u32>` - The participant ID if this client represents a node,
     ///   or `None` if it does not.
     pub fn participant_id(&self) -> Option<u32> {
-        Some(self.participant_id)
+        Some(self.config.participant_id)
     }
 
     /// Ensure the gRPC channel is connected. This performs a lazy connection
@@ -78,13 +71,22 @@ impl NodeIpcClient {
             return Ok(());
         }
 
-        let channel: Channel = Endpoint::from_shared(self.endpoint.clone())?
-            .connect_timeout(Duration::from_secs(5))
-            .tcp_keepalive(Some(Duration::from_secs(30)))
-            .connect()
-            .await?;
+        let channel: Channel =
+            Endpoint::from_shared(self.config.endpoint.clone())?
+                .connect_timeout(Duration::from_secs(5))
+                .tcp_keepalive(Some(Duration::from_secs(30)))
+                .connect()
+                .await?;
 
-        self.inner = Some(NodeClient::new(channel));
+        // Create an interceptor that adds the Bearer token to each request.
+        let interceptor: ClientAuthInterceptor =
+            ClientAuthInterceptor { config: self.config.auth.clone() };
+
+        let client: NodeClient<
+            InterceptedService<Channel, ClientAuthInterceptor>,
+        > = NodeClient::with_interceptor(channel, interceptor);
+
+        self.inner = Some(client);
         Ok(())
     }
 
@@ -96,20 +98,26 @@ impl NodeIpcClient {
     /// lazily initialize the gRPC client connection.
     ///
     /// # Returns
-    /// * `Result<&mut NodeClient<Channel>, Status>` - A mutable reference to
-    ///   the initialized gRPC client, or an error status if the connection
-    ///   fails.
+    /// * `Result<&mut NodeClient<InterceptedService<Channel,
+    ///   ClientAuthInterceptor>>, Status>` - A mutable reference to the
+    ///   initialized gRPC client, or an error status if the connection fails.
     #[instrument(skip(self))]
     async fn get_client(
         &mut self,
-    ) -> Result<&mut NodeClient<Channel>, Status> {
-        self.ensure_connected()
-            .await
-            .map_err(|error: Error| Status::unavailable(error.to_string()))?;
+    ) -> Result<
+        &mut NodeClient<InterceptedService<Channel, ClientAuthInterceptor>>,
+        Status,
+    > {
+        self.ensure_connected().await.map_err(Errors::from)?;
 
-        self.inner
+        let client: &mut NodeClient<
+            InterceptedService<Channel, ClientAuthInterceptor>,
+        > = self
+            .inner
             .as_mut()
-            .ok_or_else(|| Status::internal("Client not initialized."))
+            .ok_or(Errors::Internal("Client not initialized.".to_string()))?;
+
+        Ok(client)
     }
 
     /// Start a key generation session on a node.
@@ -126,11 +134,9 @@ impl NodeIpcClient {
         &mut self,
         request: StartKeyGenerationSessionRequest,
     ) -> Result<StartSessionResponse, Status> {
-        let identity: Identity = self.identity.clone();
-        let client: &mut NodeClient<Channel> = self.get_client().await?;
-
-        let request: Request<StartKeyGenerationSessionRequest> =
-            inject_identity(Request::new(request), identity);
+        let client: &mut NodeClient<
+            InterceptedService<Channel, ClientAuthInterceptor>,
+        > = self.get_client().await?;
 
         match client.start_key_generation_session(request).await {
             Ok(response) => Ok(response.into_inner()),
@@ -155,11 +161,9 @@ impl NodeIpcClient {
         &mut self,
         request: StartSigningSessionRequest,
     ) -> Result<StartSessionResponse, Status> {
-        let identity: Identity = self.identity.clone();
-        let client: &mut NodeClient<Channel> = self.get_client().await?;
-
-        let request: Request<StartSigningSessionRequest> =
-            inject_identity(Request::new(request), identity);
+        let client: &mut NodeClient<
+            InterceptedService<Channel, ClientAuthInterceptor>,
+        > = self.get_client().await?;
 
         match client.start_signing_session(request).await {
             Ok(response) => Ok(response.into_inner()),
@@ -184,11 +188,9 @@ impl NodeIpcClient {
         &mut self,
         request: SubmitRoundRequest,
     ) -> Result<SubmitRoundResponse, Status> {
-        let identity: Identity = self.identity.clone();
-        let client: &mut NodeClient<Channel> = self.get_client().await?;
-
-        let request: Request<SubmitRoundRequest> =
-            inject_identity(Request::new(request), identity);
+        let client: &mut NodeClient<
+            InterceptedService<Channel, ClientAuthInterceptor>,
+        > = self.get_client().await?;
 
         match client.submit_round(request).await {
             Ok(response) => Ok(response.into_inner()),
@@ -212,13 +214,12 @@ impl NodeIpcClient {
         &mut self,
         session_id: String,
     ) -> Result<FinalizeSessionResponse, Status> {
-        let identity: Identity = self.identity.clone();
-        let client: &mut NodeClient<Channel> = self.get_client().await?;
+        let client: &mut NodeClient<
+            InterceptedService<Channel, ClientAuthInterceptor>,
+        > = self.get_client().await?;
 
-        let request: Request<FinalizeSessionRequest> = inject_identity(
-            Request::new(FinalizeSessionRequest { session_id }),
-            identity,
-        );
+        let request: Request<FinalizeSessionRequest> =
+            Request::new(FinalizeSessionRequest { session_id });
 
         match client.finalize_session(request).await {
             Ok(response) => Ok(response.into_inner()),
@@ -242,13 +243,12 @@ impl NodeIpcClient {
         &mut self,
         session_id: String,
     ) -> Result<AbortSessionResponse, Status> {
-        let identity: Identity = self.identity.clone();
-        let client: &mut NodeClient<Channel> = self.get_client().await?;
+        let client: &mut NodeClient<
+            InterceptedService<Channel, ClientAuthInterceptor>,
+        > = self.get_client().await?;
 
-        let request: Request<AbortSessionRequest> = inject_identity(
-            Request::new(AbortSessionRequest { session_id }),
-            identity,
-        );
+        let request: Request<AbortSessionRequest> =
+            Request::new(AbortSessionRequest { session_id });
 
         match client.abort_session(request).await {
             Ok(response) => Ok(response.into_inner()),

@@ -38,6 +38,8 @@ impl ProtocolFactory {
     pub fn create(
         protocol_init: ProtocolInit,
     ) -> Result<Box<dyn Protocol>, Errors> {
+        tracing::debug!(?protocol_init, "Creating protocol instance.");
+
         match protocol_init {
             ProtocolInit::KeyGeneration(init) => match init {
                 KeyGenerationInit::Node(init) => match init.common.algorithm {

@@ -20,64 +20,64 @@ This engine is designed to securely manage key shares and perform signing operat
 
 ## Key Generation Protocol Overview
 
-The following sequence diagram illustrates the interactions between the orchestrator and multiple peers during a key generation session using the MPC Engine.
+The following sequence diagram illustrates the interactions between the orchestrator and multiple nodes during a key generation session using the MPC Engine.
 
-The orchestrator coordinates the session, managing rounds of communication and finalizing the key generation. Each peer operates independently, executing the same protocol steps to collaboratively generate a key share.
+The orchestrator coordinates the session, managing rounds of communication and finalizing the key generation. Each node operates independently, executing the same protocol steps to collaboratively generate a key share.
 
 ```mermaid
 sequenceDiagram
     autonumber
 
     participant Orchestrator
-    box Peers × N
-        participant Peer as Peer n
+    box Nodes × N
+        participant Node as Node n
     end
 
-    Note over Peer: Represents N independent peers<br/>All peers execute the same protocol.
+    Note over Node: Represents N independent nodes<br/>All nodes execute the same protocol.
 
-    Orchestrator->>Peer: StartKeyGenerationSession(key_id, algorithm, threshold, participants)
+    Orchestrator->>Node: StartKeyGenerationSession(key_id, algorithm, threshold, participants)
 
-    Peer-->>Orchestrator: StartSessionResponse(round = 0, payload)
+    Node-->>Orchestrator: StartSessionResponse(round = 0, payload)
 
     loop Rounds
-        Orchestrator->>Peer: SubmitRound(from?, to?, payload)
-        Peer-->>Orchestrator: SubmitRoundResponse(new_round, payload)
+        Orchestrator->>Node: SubmitRound(from?, to?, payload)
+        Node-->>Orchestrator: SubmitRoundResponse(new_round, payload)
     end
 
-    Orchestrator->>Peer: FinalizeSession
-    Peer->>Peer: StoreKeyShare
-    Peer-->>Orchestrator: FinalizeSessionResponse(public_key)
+    Orchestrator->>Node: FinalizeSession
+    Node->>Node: StoreKeyShare
+    Node-->>Orchestrator: FinalizeSessionResponse(public_key)
 
     Orchestrator-->>Orchestrator: PublishPublicKey
 ```
 
 ## Signing Protocol Overview
 
-The following sequence diagram illustrates the interactions between the orchestrator and multiple peers during a signing session using the MPC Engine.
+The following sequence diagram illustrates the interactions between the orchestrator and multiple nodes during a signing session using the MPC Engine.
 
-Each peer operates independently, executing the same protocol steps to collaboratively generate a signature. The orchestrator coordinates the session, managing rounds of communication and finalizing the signature.
+Each node operates independently, executing the same protocol steps to collaboratively generate a signature. The orchestrator coordinates the session, managing rounds of communication and finalizing the signature.
 
 ```mermaid
 sequenceDiagram
     autonumber
 
     participant Orchestrator
-    box Peers (× N)
-        participant Peer as Peer n
+    box Nodes (× N)
+        participant Node as Node n
     end
 
-    Note over Peer: It represents N independent peers<br />All peers execute the same protocol.
+    Note over Node: It represents N independent nodes<br />All nodes execute the same protocol.
 
-    Orchestrator->>Peer: StartSigningSession(key_id, algorithm, threshold, participants, message)
-    Peer-->>Orchestrator: StartSessionResponse(round=0, payload)
+    Orchestrator->>Node: StartSigningSession(key_id, algorithm, threshold, participants, message)
+    Node-->>Orchestrator: StartSessionResponse(round=0, payload)
 
     loop Rounds
-        Orchestrator->>Peer: SubmitRound(from?, to?, payload)
-        Peer-->>Orchestrator: SubmitRoundResponse(new_round, payload)
+        Orchestrator->>Node: SubmitRound(from?, to?, payload)
+        Node-->>Orchestrator: SubmitRoundResponse(new_round, payload)
     end
 
-    Orchestrator->>Peer: FinalizeSession
-    Peer-->>Orchestrator: FinalizeSessionResponse(signature)
+    Orchestrator->>Node: FinalizeSession
+    Node-->>Orchestrator: FinalizeSessionResponse(signature)
 
     Orchestrator-->>Orchestrator: CombineSignatures(signatures[])
     Orchestrator-->>Orchestrator: VerifySignature(public_key, message, signature)

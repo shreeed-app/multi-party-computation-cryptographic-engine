@@ -7,14 +7,16 @@ use std::{
 
 use async_trait::async_trait;
 use tonic::transport::{Error as TransportError, Server};
+use tonic_middleware::RequestInterceptorLayer;
 use tonic_reflection::server::{
     Builder as ReflectionBuilder,
     Error as ReflectionError,
     v1::{ServerReflection, ServerReflectionServer},
 };
+use tower::{limit::ConcurrencyLimitLayer, timeout::TimeoutLayer};
 
 use crate::{
-    auth::{identity::Identity, ipc::auth::TokenAuth},
+    auth::bearer_server::BearerAuthInterceptor,
     config::node::NodeRuntimeConfig,
     logging::engine::LoggingEngine,
     proto::{FILE_DESCRIPTOR_SET, signer::v1::node_server::NodeServer},
@@ -50,33 +52,25 @@ impl RuntimeApi for NodeRuntime {
             "Starting node runtime."
         );
 
-        // Create identity for the node based on configuration.
-        let identity: Identity = Identity::Node {
-            node_id: config.ipc.node_id,
-            participant_id: config.ipc.participant_id,
-        };
-
         // Initialize Hashicorp Vault provider based on configuration.
         let vault: HashicorpVaultProvider =
             HashicorpVaultProvider::try_from_config(config.vault)?;
-
-        // Initialize authentication for the node using token-based
-        // authentication from configuration.
-        let auth: TokenAuth =
-            TokenAuth::new(config.ipc.auth.token.clone(), identity.clone());
+        tracing::debug!("Initialized Hashicorp Vault provider.");
 
         // Build the node engine with session TTL from configuration.
         let engine: NodeEngine = EngineBuilder::new()
             .session_ttl(Duration::from_secs(config.ipc.ttl_seconds))
             .build();
+        tracing::debug!(
+            "Initialized node engine with session TTL of {} seconds.",
+            config.ipc.ttl_seconds
+        );
 
         // Create the gRPC server for the node, injecting the engine,
         // auth, and vault provider.
-        let server: NodeIpcServer<
-            TokenAuth,
-            NodeEngine,
-            HashicorpVaultProvider,
-        > = NodeIpcServer::new(engine, auth, vault);
+        let server: NodeIpcServer<NodeEngine, HashicorpVaultProvider> =
+            NodeIpcServer::new(engine, vault);
+        tracing::debug!("Initialized node IPC server.");
 
         // Parse the server address from configuration and handle any parsing
         // errors.
@@ -84,6 +78,12 @@ impl RuntimeApi for NodeRuntime {
             config.ipc.address.parse().map_err(|error: AddrParseError| {
                 Errors::ConfigError(error.to_string())
             })?;
+        tracing::debug!(%address, "Parsed node IPC server address.");
+
+        let auth_layer: RequestInterceptorLayer<BearerAuthInterceptor> =
+            RequestInterceptorLayer::new(BearerAuthInterceptor::new(
+                config.ipc.auth.token.clone(),
+            ));
 
         let reflection_service: ServerReflectionServer<impl ServerReflection> =
             ReflectionBuilder::configure()
@@ -92,10 +92,14 @@ impl RuntimeApi for NodeRuntime {
                 .map_err(|error: ReflectionError| {
                     Errors::ConfigError(error.to_string())
                 })?;
+        tracing::debug!("Configured gRPC reflection service.");
 
         // Start the gRPC server and handle any errors that occur during
         // startup.
         Server::builder()
+            .layer(ConcurrencyLimitLayer::new(100))
+            .layer(TimeoutLayer::new(Duration::from_secs(10)))
+            .layer(auth_layer)
             .add_service(reflection_service)
             .add_service(NodeServer::new(server))
             .serve(address)

@@ -3,15 +3,10 @@
 use std::str::FromStr;
 
 use tonic::{Request, Response, Status};
-use tracing::instrument;
+use tracing::{field::Empty, instrument};
 
 use crate::{
-    auth::{
-        identity::Identity,
-        ipc::auth::AuthProvider,
-        policy::SessionPolicy,
-        session::identifier::SessionId,
-    },
+    auth::session::identifier::SessionId,
     proto::signer::v1::{
         AbortSessionRequest,
         AbortSessionResponse,
@@ -47,53 +42,32 @@ use crate::{
 };
 
 /// gRPC IPC server exposing the signing engine.
-pub struct NodeIpcServer<A: AuthProvider, E: EngineApi, V: VaultProvider> {
-    /// IPC authentication provider.
-    pub auth: A,
+pub struct NodeIpcServer<E: EngineApi, V: VaultProvider> {
     /// Signing engine (business logic).
     pub engine: E,
     /// Vault provider for key shares.
     pub vault: V,
 }
 
-impl<A: AuthProvider, E: EngineApi, V: VaultProvider> NodeIpcServer<A, E, V> {
+impl<E: EngineApi, V: VaultProvider> NodeIpcServer<E, V> {
     /// Create a new IPC server.
     ///
     /// # Arguments
     /// * `engine` (`E`) - Signing engine instance.
-    /// * `auth` (`A`) - IPC authentication provider.
     /// * `vault` (`V`) - Vault provider for key shares.
     ///
     /// # Returns
     /// * `Self` - New IPC server instance.
-    pub fn new(engine: E, auth: A, vault: V) -> Self {
-        Self { engine, auth, vault }
-    }
-
-    /// Authenticate an incoming request.
-    ///
-    /// # Arguments
-    /// * `request` (`&Request<T>`) - Incoming gRPC request.
-    ///
-    /// # Errors
-    /// * `Error` - If authentication fails.
-    ///
-    /// # Returns
-    /// * `Result<Identity, Error>` - Ok if authenticated, error otherwise.
-    fn authenticate<T>(
-        &self,
-        request: &Request<T>,
-    ) -> Result<Identity, Errors> {
-        self.auth.authenticate(request)
+    pub fn new(engine: E, vault: V) -> Self {
+        Self { engine, vault }
     }
 }
 
 #[tonic::async_trait]
 impl<
-    A: AuthProvider + Send + Sync + 'static,
     E: EngineApi + Send + Sync + 'static,
     V: VaultProvider + Send + Sync + 'static,
-> Node for NodeIpcServer<A, E, V>
+> Node for NodeIpcServer<E, V>
 {
     /// Start a new signing session.
     ///
@@ -107,31 +81,29 @@ impl<
     /// # Returns
     /// * `Result<Response<StartSessionResponse>, Status>` - gRPC response or
     ///   error.
-    #[instrument(skip(self, request))]
+    #[instrument(skip(self, request), fields(
+        key_id = %request.get_ref().key_id,
+        session = Empty
+    ))]
     async fn start_signing_session(
         &self,
         request: Request<StartSigningSessionRequest>,
     ) -> Result<Response<StartSessionResponse>, Status> {
-        let identity: Identity =
-            self.authenticate(&request).map_err(Status::from)?;
-        SessionPolicy::can_start_signing_session(&identity)
-            .map_err(Status::from)?;
-
         let request: &StartSigningSessionRequest = request.get_ref();
 
         // Retrieve key share from vault in a blocking task.
         let key_id: String = request.key_id.clone();
 
-        let key_share: KeyShare =
-            self.vault.get_key_share(&key_id).await.map_err(Status::from)?;
+        let key_share: KeyShare = self.vault.get_key_share(&key_id).await?;
 
         let algorithm: Algorithm =
             match Algorithm::from_str(&request.algorithm) {
                 Ok(algorithm) => algorithm,
                 Err(_) => {
-                    return Err(Status::from(Errors::UnsupportedAlgorithm(
+                    return Err(Errors::UnsupportedAlgorithm(
                         request.algorithm.clone(),
-                    )));
+                    )
+                    .into());
                 },
             };
 
@@ -148,10 +120,7 @@ impl<
             }));
 
         let (session_id, round_message): (SessionId, RoundMessage) =
-            match self.engine.start_session(init).await {
-                Ok(result) => result,
-                Err(error) => return Err(Status::from(error)),
-            };
+            self.engine.start_session(init).await?;
 
         Ok(Response::new(StartSessionResponse {
             session_id: session_id.to_string(),
@@ -172,23 +141,19 @@ impl<
     /// # Returns
     /// * `Result<Response<StartSessionResponse>, Status>` - gRPC response or
     ///   error.
-    #[instrument(skip(self, request))]
+    #[instrument(skip(self, request), fields(
+        key_id = %request.get_ref().key_id,
+        session = Empty
+    ))]
     async fn start_key_generation_session(
         &self,
         request: Request<StartKeyGenerationSessionRequest>,
     ) -> Result<Response<StartSessionResponse>, Status> {
-        let identity: Identity =
-            self.authenticate(&request).map_err(Status::from)?;
-        SessionPolicy::can_start_key_generation_session(&identity)
-            .map_err(Status::from)?;
-
         let request: &StartKeyGenerationSessionRequest = request.get_ref();
 
         let algorithm: Algorithm = Algorithm::from_str(&request.algorithm)
             .map_err(|_| {
-                Status::from(Errors::UnsupportedAlgorithm(
-                    request.algorithm.clone(),
-                ))
+                Errors::UnsupportedAlgorithm(request.algorithm.clone())
             })?;
 
         let init: ProtocolInit = ProtocolInit::KeyGeneration(
@@ -204,7 +169,7 @@ impl<
         );
 
         let (session_id, round_message): (SessionId, RoundMessage) =
-            self.engine.start_session(init).await.map_err(Status::from)?;
+            self.engine.start_session(init).await?;
 
         Ok(Response::new(StartSessionResponse {
             session_id: session_id.to_string(),
@@ -230,19 +195,16 @@ impl<
         &self,
         request: Request<SubmitRoundRequest>,
     ) -> Result<Response<SubmitRoundResponse>, Status> {
-        let identity: Identity =
-            self.authenticate(&request).map_err(Status::from)?;
-        SessionPolicy::can_submit_round(&identity).map_err(Status::from)?;
-
         let request: &SubmitRoundRequest = request.get_ref();
 
         let session_id: SessionId = match SessionId::parse(&request.session_id)
         {
             Some(id) => id,
             None => {
-                return Err(Status::from(Errors::SessionNotFound(
+                return Err(Errors::SessionNotFound(
                     request.session_id.clone(),
-                )));
+                )
+                .into());
             },
         };
 
@@ -253,10 +215,7 @@ impl<
             payload: request.payload.clone(),
         };
         let round_message: RoundMessage =
-            match self.engine.submit_round(session_id, message).await {
-                Ok(result) => result,
-                Err(error) => return Err(Status::from(error)),
-            };
+            self.engine.submit_round(session_id, message).await?;
 
         Ok(Response::new(SubmitRoundResponse {
             round: round_message.round,
@@ -284,28 +243,20 @@ impl<
         &self,
         request: Request<FinalizeSessionRequest>,
     ) -> Result<Response<FinalizeSessionResponse>, Status> {
-        let identity: Identity =
-            self.authenticate(&request).map_err(Status::from)?;
-        SessionPolicy::can_finalize_session(&identity)
-            .map_err(Status::from)?;
-
         let request: &FinalizeSessionRequest = request.get_ref();
 
         let session_id: SessionId = match SessionId::parse(&request.session_id)
         {
             Some(id) => id,
             None => {
-                return Err(Status::from(Errors::SessionNotFound(
+                return Err(Errors::SessionNotFound(
                     request.session_id.clone(),
-                )));
+                )
+                .into());
             },
         };
 
-        let output: ProtocolOutput =
-            match self.engine.finalize(session_id).await {
-                Ok(signature) => signature,
-                Err(error) => return Err(Status::from(error)),
-            };
+        let output: ProtocolOutput = self.engine.finalize(session_id).await?;
 
         match output {
             // Signing output: return final signature to caller.
@@ -326,10 +277,7 @@ impl<
                 public_key_package,
             } => {
                 // Store key share in vault in a blocking task.
-                self.vault
-                    .store_key_share(&key_id, key_share)
-                    .await
-                    .map_err(Status::from)?;
+                self.vault.store_key_share(&key_id, key_share).await?;
 
                 Ok(Response::new(FinalizeSessionResponse {
                     final_output: Some(FinalOutput::KeyGeneration(
@@ -356,26 +304,20 @@ impl<
         &self,
         request: Request<AbortSessionRequest>,
     ) -> Result<Response<AbortSessionResponse>, Status> {
-        let identity: Identity =
-            self.authenticate(&request).map_err(Status::from)?;
-        SessionPolicy::can_abort_session(&identity).map_err(Status::from)?;
-
         let request: &AbortSessionRequest = request.get_ref();
 
         let session_id: SessionId = match SessionId::parse(&request.session_id)
         {
             Some(id) => id,
             None => {
-                return Err(Status::from(Errors::SessionNotFound(
+                return Err(Errors::SessionNotFound(
                     request.session_id.clone(),
-                )));
+                )
+                .into());
             },
         };
 
-        match self.engine.abort(session_id).await {
-            Ok(()) => (),
-            Err(error) => return Err(Status::from(error)),
-        };
+        self.engine.abort(session_id).await?;
 
         Ok(Response::new(AbortSessionResponse {}))
     }

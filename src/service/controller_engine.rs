@@ -55,6 +55,8 @@ impl EngineApi for ControllerEngine {
         &self,
         init: ProtocolInit,
     ) -> Result<(SessionId, RoundMessage), Errors> {
+        tracing::debug!(?init, "Starting protocol session.");
+
         let mut protocol: Box<dyn Protocol> = ProtocolFactory::create(init)?;
 
         // Execute full orchestration
@@ -111,6 +113,8 @@ impl EngineApi for ControllerEngine {
         &self,
         session_id: SessionId,
     ) -> Result<ProtocolOutput, Errors> {
+        tracing::debug!(?session_id, "Finalizing protocol session.");
+
         self.outputs
             .write()
             .map_err(|_| Errors::LiveLockAcquireError)?
@@ -132,6 +136,8 @@ impl EngineApi for ControllerEngine {
     /// * `()` - Unit.
     #[instrument(skip(self), fields(session_id = %session_id))]
     async fn abort(&self, session_id: SessionId) -> Result<(), Errors> {
+        tracing::debug!(?session_id, "Aborting protocol session.");
+
         self.outputs
             .write()
             .map_err(|_| Errors::LiveLockAcquireError)?

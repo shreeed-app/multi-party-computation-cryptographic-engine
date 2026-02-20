@@ -78,12 +78,12 @@ impl EngineApi for NodeEngine {
         &self,
         init: ProtocolInit,
     ) -> Result<(SessionId, RoundMessage), Errors> {
+        tracing::debug!(?init, "Starting protocol session.");
+
         let session_id: SessionId = self.sessions.create();
 
         let mut protocol: Box<dyn Protocol> = ProtocolFactory::create(init)
-            .inspect_err(|_| {
-                self.sessions.remove(session_id);
-            })?;
+            .inspect_err(|_| self.sessions.remove(session_id))?;
 
         let round: RoundMessage =
             protocol.next_round().await?.ok_or_else(|| {
@@ -128,6 +128,8 @@ impl EngineApi for NodeEngine {
         session_id: SessionId,
         message: RoundMessage,
     ) -> Result<RoundMessage, Errors> {
+        tracing::debug!(?message, "Submitting round message.");
+
         self.sessions
             .with_session(session_id, |state: &mut SessionState| {
                 state.validate_round(message.round)
@@ -190,6 +192,8 @@ impl EngineApi for NodeEngine {
         &self,
         session_id: SessionId,
     ) -> Result<ProtocolOutput, Errors> {
+        tracing::debug!(?session_id, "Finalizing protocol session.");
+
         self.sessions
             .with_session(session_id, |state: &mut SessionState| {
                 state.finalize()
@@ -228,6 +232,8 @@ impl EngineApi for NodeEngine {
     /// * `()` - Nothing.
     #[instrument(skip(self), fields(session_id = %session_id))]
     async fn abort(&self, session_id: SessionId) -> Result<(), Errors> {
+        tracing::debug!(?session_id, "Aborting protocol session.");
+
         self.sessions.with_session(
             session_id,
             |state: &mut SessionState| {

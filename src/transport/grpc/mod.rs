@@ -3,6 +3,5 @@
 
 pub mod controller_server;
 pub mod mapping;
-pub mod middleware;
 pub mod node_client;
 pub mod node_server;

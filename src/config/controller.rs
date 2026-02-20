@@ -6,13 +6,15 @@ use serde::Deserialize;
 use toml::{de::Error as TomlError, from_str};
 
 use crate::{
-    auth::ipc::config::ControllerIpcConfig,
-    config::api::RuntimeConfig,
+    config::{
+        api::RuntimeConfig,
+        ipc::{AuthConfig, ControllerIpcConfig},
+    },
     transport::errors::Errors,
 };
 
 /// Controller runtime configuration and related types.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ControllerRuntimeConfig {
     /// IPC configuration for the controller.
     pub ipc: ControllerIpcConfig,
@@ -21,14 +23,14 @@ pub struct ControllerRuntimeConfig {
 }
 
 /// Configuration for a node that the controller will connect to.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct NodeConfig {
     /// Endpoint of the node's IPC server.
     pub endpoint: String,
     /// Participant ID associated with the node.
     pub participant_id: u32,
-    /// Authentication token for connecting to the node.
-    pub auth_token: String,
+    /// Authentication configuration for connecting to the node.
+    pub auth: AuthConfig,
 }
 
 impl RuntimeConfig for ControllerRuntimeConfig {

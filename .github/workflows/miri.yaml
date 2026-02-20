@@ -3,10 +3,20 @@ name: Miri
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * 0"
+    - cron: "0 0 */5 * *"
   pull_request:
+    branches:
+      - master
+
+concurrency:
+  group: miri-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
+  CARGO_HOME: /home/runner/.cargo
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -15,44 +25,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Cache Protoc
-        id: cache-protoc
-        uses: actions/cache@v4
-        with:
-          path: /usr/bin/protoc
-          key: protoc-${{ runner.os }}
+      - uses: actions/checkout@v4
 
       - name: Install Protoc
-        if: steps.cache-protoc.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - name: Install Rust nightly with Miri
-        uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
           components: miri
-          override: true
 
-      - name: Cargo cache
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          cache-on-failure: true
           shared-key: miri
+          cache-on-failure: true
 
       - name: Cache Miri sysroot
         uses: actions/cache@v4
         with:
           path: ~/.cache/miri
-          key: miri-sysroot-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
-          restore-keys: |
-            miri-sysroot-${{ runner.os }}-
+          key: miri-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
 
-      - name: Run Miri
-        run: |
-          cargo miri setup
-          cargo miri test
+      - name: Setup Miri
+        run: cargo miri setup
+
+      - name: Run Miri tests
+        run: cargo miri test --all-features --all-targets

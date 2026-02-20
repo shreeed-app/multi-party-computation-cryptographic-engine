@@ -11,7 +11,10 @@ ignored = ["prost", "tonic-prost", "strum"]
 
 [workspace.metadata.dylint]
 libraries = [
-    { git = "https://github.com/shreeed-app/rust-security-lints", branch = "dev", pattern = "rules/*" },
+    { git = "https://github.com/shreeed-app/rust-security-lints", branch = "master", pattern = "rules/*" },
+    # For local development, you can use the path to the local copy of the 
+    # repository instead of the git dependency.
+    # { path = "../rust-security-lints/rules/*" },
 ]
 
 [[bin]]
@@ -30,7 +33,7 @@ cggmp24 = { version = "0.7.0-alpha.3", features = [
     "state-machine",
     "curve-secp256k1",
 ] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4.5.60", features = ["derive"] }
 config = "0.15.19"
 crossbeam-channel = "0.5.15"
 dotenvy = "0.15.7"
@@ -80,4 +83,4 @@ vaultrs = "0.7.4"
 zeroize = "1.8"
 
 [build-dependencies]
-tonic-prost-build = "0.14.4"
+tonic-prost-build = "0.14.5"

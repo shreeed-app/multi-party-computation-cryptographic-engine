@@ -1,75 +1,54 @@
-name: Continuous integration
+name: Continuous Integration
 
 on:
   push:
     branches:
       - master
   pull_request:
+    branches:
+      - master
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
-  RUSTUP_TOOLCHAIN: nightly
 
 jobs:
   ci:
-    name: Continuous integration
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - name: Set up nightly toolchain
-        run: |
-          rustup toolchain install nightly --profile minimal
-          rustup default nightly
-          rustup component add rustfmt clippy
-
-      - name: Restore Rust cache
-        uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          cache-on-failure: true
-          shared-key: nightly-ci
+          toolchain: nightly
+          components: rustfmt, clippy
 
-      - name: Cache cargo binaries
-        uses: actions/cache@v4
+      - name: Ensure cargo in PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - name: Install dependencies
+        run: |
+          cargo binstall -y \
+            cargo-make \
+            cargo-deny \
+            cargo-audit \
+            cargo-dylint \
+            dylint-link
+
+      - uses: arduino/setup-protoc@v3
         with:
-          path: ~/.cargo/bin
-          key: cargo-bin-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-bin-${{ runner.os }}-
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cache Protoc
-        id: cache-protoc
-        uses: actions/cache@v4
-        with:
-          path: /usr/bin/protoc
-          key: protoc-${{ runner.os }}
-
-      - name: Install system dependencies
-        if: steps.cache-protoc.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-
-      - name: Install cargo-make
-        run: |
-          if ! command -v cargo-make >/dev/null 2>&1; then
-            cargo install cargo-make --locked
-          fi
-
-      - name: Install cargo-deny
-        run: |
-          if ! command -v cargo-deny >/dev/null 2>&1; then
-            cargo install cargo-deny --locked
-          fi
-
-      - name: Install cargo-audit
-        run: |
-          if ! command -v cargo-audit >/dev/null 2>&1; then
-            cargo install cargo-audit --locked
-          fi
-
-      - name: Continuous integration pipeline
+      - name: Run CI
         run: cargo make ci

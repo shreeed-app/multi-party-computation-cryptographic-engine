@@ -43,7 +43,7 @@ impl NodeIpcClient {
     ///
     /// # Arguments
     /// * `config` (`NodeConfig`) - The configuration for the node connection,
-    ///  including the endpoint, participant ID, and authentication token.
+    ///   including the endpoint, participant ID, and authentication token.
     ///
     /// # Returns
     /// * `NodeIpcClient` - A new instance of the node gRPC client.

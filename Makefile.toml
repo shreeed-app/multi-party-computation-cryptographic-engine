@@ -179,6 +179,9 @@ args = [
     "ubuntu-latest=ghcr.io/catthehacker/ubuntu:full-latest",
     "--container-architecture",
     "linux/amd64",
+    "--secret-file",
+    ".secrets",
+    "--rm",
 ]
 
 [tasks.act-miri]
@@ -193,4 +196,7 @@ args = [
     "ubuntu-latest=ghcr.io/catthehacker/ubuntu:full-latest",
     "--container-architecture",
     "linux/amd64",
+    "--secret-file",
+    ".secrets",
+    "--rm",
 ]

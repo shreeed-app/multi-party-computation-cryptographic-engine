@@ -64,7 +64,9 @@ impl RequestInterceptor for BearerAuthInterceptor {
             let auth: Authorization<Bearer> = request
                 .headers()
                 .typed_get()
-                .ok_or(Errors::MissingAuthorization)?;
+                .ok_or(Errors::MissingAuthorization(
+                    "Authorization header is missing.".into(),
+                ))?;
 
             let token: &str = auth.token();
 
@@ -76,7 +78,10 @@ impl RequestInterceptor for BearerAuthInterceptor {
                     token.as_bytes(),
                 ))
             {
-                return Err(Errors::InvalidToken.into());
+                return Err(Errors::InvalidToken(
+                    "Provided token does not match expected token.".into(),
+                )
+                .into());
             }
 
             Ok(request)

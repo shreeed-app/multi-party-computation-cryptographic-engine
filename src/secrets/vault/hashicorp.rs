@@ -1,7 +1,7 @@
 //! HashiCorp Vault provider (KV v2).
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{DecodeError, Engine as _, engine::general_purpose};
 use serde_json::Value;
 use vaultrs::{
     client::{VaultClient, VaultClientSettings, VaultClientSettingsBuilder},
@@ -44,7 +44,11 @@ impl HashicorpVaultProvider {
     pub fn try_from_config(config: VaultConfig) -> Result<Self, Errors> {
         let token: String = match &config.token {
             Some(token) => token.clone(),
-            None => return Err(Errors::VaultTokenMissing),
+            None => {
+                return Err(Errors::VaultError(
+                    "Vault token is missing in configuration.".into(),
+                ));
+            },
         };
 
         let settings: VaultClientSettings =
@@ -55,12 +59,22 @@ impl HashicorpVaultProvider {
                 .build()
             {
                 Ok(settings) => settings,
-                Err(_) => return Err(Errors::VaultConfigError),
+                Err(error) => {
+                    return Err(Errors::VaultConfigError(format!(
+                        "Failed to build Vault client settings: {}",
+                        error
+                    )));
+                },
             };
 
         let client: VaultClient = match VaultClient::new(settings) {
             Ok(client) => client,
-            Err(_) => return Err(Errors::VaultError),
+            Err(error) => {
+                return Err(Errors::VaultError(format!(
+                    "Failed to create Vault client: {}",
+                    error
+                )));
+            },
         };
 
         Ok(Self {
@@ -99,7 +113,12 @@ impl VaultProvider for HashicorpVaultProvider {
             let value: Value =
                 match kv2::read(&self.client, &self.mount, &path).await {
                     Ok(data) => data,
-                    Err(_) => return Err(Errors::KeyNotFound),
+                    Err(error) => {
+                        return Err(Errors::VaultError(format!(
+                            "Failed to read secret from Vault: {}",
+                            error
+                        )));
+                    },
                 };
 
             // Decode base64 to bytes.
@@ -107,11 +126,18 @@ impl VaultProvider for HashicorpVaultProvider {
                 let share_b64: &str = value
                     .get(&self.field)
                     .and_then(|value: &Value| value.as_str())
-                    .ok_or(Errors::InvalidKeyShare)?;
+                    .ok_or(Errors::InvalidKeyShare(
+                        "Missing field in Vault secret.".into(),
+                    ))?;
 
                 general_purpose::STANDARD
                     .decode(share_b64.as_bytes())
-                    .map_err(|_| Errors::InvalidKeyShare)?
+                    .map_err(|error: DecodeError| {
+                        Errors::InvalidKeyShare(format!(
+                            "Failed to decode base64: {}",
+                            error
+                        ))
+                    })?
             };
 
             bytes
@@ -149,13 +175,18 @@ impl VaultProvider for HashicorpVaultProvider {
         if let Some(data) = data.as_object_mut() {
             data.insert(self.field.clone(), Value::String(share_b64));
         } else {
-            return Err(Errors::VaultError);
+            return Err(Errors::VaultError(
+                "Failed to create JSON object.".into(),
+            ));
         }
 
         // Store in Vault KV v2.
         match kv2::set(&self.client, &self.mount, &path, &data).await {
             Ok(_) => Ok(()),
-            Err(_) => Err(Errors::VaultError),
+            Err(error) => Err(Errors::VaultError(format!(
+                "Failed to store secret in Vault: {}",
+                error
+            ))),
         }
     }
 }

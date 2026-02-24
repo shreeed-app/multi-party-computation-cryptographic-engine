@@ -47,7 +47,12 @@ where
 {
     to_bytes::<RkyvError>(value)
         .map(|buffer: AlignedVec| buffer.into_vec())
-        .map_err(|_| Errors::InvalidMessage)
+        .map_err(|error: RkyvError| {
+            Errors::InvalidMessage(format!(
+                "Failed to serialize message: {}.",
+                error
+            ))
+        })
 }
 
 /// Decodes the message.
@@ -66,5 +71,10 @@ where
     T::Archived: for<'l> CheckBytes<HighValidator<'l>>,
     T::Archived: Deserialize<T, HighDeserializer>,
 {
-    from_bytes::<T, RkyvError>(bytes).map_err(|_| Errors::InvalidMessage)
+    from_bytes::<T, RkyvError>(bytes).map_err(|error: RkyvError| {
+        Errors::InvalidMessage(format!(
+            "Failed to deserialize message: {}.",
+            error
+        ))
+    })
 }

@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{RwLock, RwLockWriteGuard},
+    sync::{PoisonError, RwLock, RwLockWriteGuard},
     time::Duration,
 };
 
@@ -106,7 +106,16 @@ impl EngineApi for NodeEngine {
 
         self.live
             .write()
-            .map_err(|_| Errors::LiveLockAcquireError)?
+            .map_err(
+                |error: PoisonError<
+                    RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>>,
+                >| {
+                    Errors::LiveLockAcquireError(format!(
+                        "Failed to acquire live lock: {}",
+                        error
+                    ))
+                },
+            )?
             .insert(session_id, entry);
 
         Ok((session_id, round))
@@ -139,7 +148,16 @@ impl EngineApi for NodeEngine {
             let mut live: RwLockWriteGuard<
                 '_,
                 HashMap<SessionId, SessionEntry>,
-            > = self.live.write().map_err(|_| Errors::LiveLockAcquireError)?;
+            > = self.live.write().map_err(
+                |error: PoisonError<
+                    RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>>,
+                >| {
+                    Errors::LiveLockAcquireError(format!(
+                        "Failed to acquire live lock: {}",
+                        error
+                    ))
+                },
+            )?;
 
             let entry: &mut SessionEntry =
                 live.get_mut(&session_id).ok_or_else(|| {
@@ -158,7 +176,16 @@ impl EngineApi for NodeEngine {
                 .ok_or_else(|| Errors::InvalidState(session_id.to_string()))?;
 
         let mut live: RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>> =
-            self.live.write().map_err(|_| Errors::LiveLockAcquireError)?;
+            self.live.write().map_err(
+                |error: PoisonError<
+                    RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>>,
+                >| {
+                    Errors::LiveLockAcquireError(format!(
+                        "Failed to acquire live lock: {}",
+                        error
+                    ))
+                },
+            )?;
 
         let entry: &mut SessionEntry = live
             .get_mut(&session_id)
@@ -203,7 +230,16 @@ impl EngineApi for NodeEngine {
             let mut live: RwLockWriteGuard<
                 '_,
                 HashMap<SessionId, SessionEntry>,
-            > = self.live.write().map_err(|_| Errors::LiveLockAcquireError)?;
+            > = self.live.write().map_err(
+                |error: PoisonError<
+                    RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>>,
+                >| {
+                    Errors::LiveLockAcquireError(format!(
+                        "Failed to acquire live lock: {}",
+                        error
+                    ))
+                },
+            )?;
 
             let entry: SessionEntry =
                 live.remove(&session_id).ok_or_else(|| {

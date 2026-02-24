@@ -4,7 +4,10 @@
 //! distributed protocol inside `start_session` and stores
 //! the final result in-memory until `finalize` is called.
 
-use std::{collections::HashMap, sync::RwLock};
+use std::{
+    collections::HashMap,
+    sync::{PoisonError, RwLock, RwLockWriteGuard},
+};
 
 use async_trait::async_trait;
 use tracing::instrument;
@@ -67,7 +70,16 @@ impl EngineApi for ControllerEngine {
 
         self.outputs
             .write()
-            .map_err(|_| Errors::LiveLockAcquireError)?
+            .map_err(
+                |error: PoisonError<
+                    RwLockWriteGuard<'_, HashMap<SessionId, ProtocolOutput>>,
+                >| {
+                    Errors::LiveLockAcquireError(format!(
+                        "Failed to acquire live lock: {}.",
+                        error
+                    ))
+                },
+            )?
             .insert(session_id, output);
 
         // Controller does not use RoundMessage.
@@ -117,7 +129,16 @@ impl EngineApi for ControllerEngine {
 
         self.outputs
             .write()
-            .map_err(|_| Errors::LiveLockAcquireError)?
+            .map_err(
+                |error: PoisonError<
+                    RwLockWriteGuard<'_, HashMap<SessionId, ProtocolOutput>>,
+                >| {
+                    Errors::LiveLockAcquireError(format!(
+                        "Failed to acquire live lock: {}.",
+                        error
+                    ))
+                },
+            )?
             .remove(&session_id)
             .ok_or_else(|| Errors::SessionNotFound(session_id.to_string()))
     }
@@ -140,7 +161,16 @@ impl EngineApi for ControllerEngine {
 
         self.outputs
             .write()
-            .map_err(|_| Errors::LiveLockAcquireError)?
+            .map_err(
+                |error: PoisonError<
+                    RwLockWriteGuard<'_, HashMap<SessionId, ProtocolOutput>>,
+                >| {
+                    Errors::LiveLockAcquireError(format!(
+                        "Failed to acquire live lock: {}.",
+                        error
+                    ))
+                },
+            )?
             .remove(&session_id);
 
         Ok(())

@@ -65,11 +65,11 @@ impl LoggingEngine {
             .with_thread_ids(true)
             .with_thread_names(true);
 
-        tracing_subscriber::registry()
+        let _ = tracing_subscriber::registry()
             .with(env_filter)
             .with(console_layer)
             .with(file_layer)
-            .init();
+            .try_init();
 
         tracing::info!(service = service_name, "Logging initialized.");
     }

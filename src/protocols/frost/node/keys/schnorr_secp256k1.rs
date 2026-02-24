@@ -1,9 +1,10 @@
 //! Frost-secp256k1 participant-side DKG (Distributed Key Generation).
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, num::TryFromIntError};
 
 use async_trait::async_trait;
 use frost_secp256k1::{
+    Error,
     Identifier,
     keys::{
         KeyPackage,
@@ -12,8 +13,8 @@ use frost_secp256k1::{
     },
     rand_core::OsRng,
 };
-use postcard::{from_bytes, to_allocvec};
-use rkyv::{rancor::Error as RkyvError, util::AlignedVec};
+use postcard::{Error as PostcardError, from_bytes, to_allocvec};
+use rkyv::{rancor::Error as RkyvError, to_bytes, util::AlignedVec};
 
 use crate::{
     protocols::{
@@ -80,7 +81,11 @@ impl FrostSchnorrSecp256k1NodeKeyGeneration {
     pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
         let init: NodeKeyGenerationInit = match protocol_init {
             ProtocolInit::KeyGeneration(KeyGenerationInit::Node(init)) => init,
-            _ => return Err(Errors::InvalidProtocolInit),
+            _ => {
+                return Err(Errors::InvalidProtocolInit(
+                    "Expected node key generation init.".into(),
+                ));
+            },
         };
 
         if init.common.algorithm != Algorithm::FrostSchnorrSecp256k1 {
@@ -89,11 +94,21 @@ impl FrostSchnorrSecp256k1NodeKeyGeneration {
             ));
         }
 
-        let identifier: Identifier = Identifier::try_from(
-            u16::try_from(init.identifier)
-                .map_err(|_| Errors::InvalidProtocolInit)?,
-        )
-        .map_err(|_| Errors::InvalidProtocolInit)?;
+        let identifier: Identifier =
+            Identifier::try_from(u16::try_from(init.identifier).map_err(
+                |error: TryFromIntError| {
+                    Errors::InvalidProtocolInit(format!(
+                        "Failed to convert identifier to u16: {}",
+                        error
+                    ))
+                },
+            )?)
+            .map_err(|error: Error| {
+                Errors::InvalidProtocolInit(format!(
+                    "Failed to create FROST Identifier: {}",
+                    error
+                ))
+            })?;
 
         // Initialize identifier/identifier_u32 map.
         let mut identifier_map: BTreeMap<Identifier, u32> = BTreeMap::new();
@@ -161,7 +176,7 @@ impl Protocol for FrostSchnorrSecp256k1NodeKeyGeneration {
     /// * `Error` - If advancing the round fails.
     async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Errors::Aborted);
+            return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
         if self.round != 0 {
             return Ok(None);
@@ -170,21 +185,44 @@ impl Protocol for FrostSchnorrSecp256k1NodeKeyGeneration {
         let (secret, package): (round1::SecretPackage, round1::Package) =
             part1(
                 self.identifier,
-                u16::try_from(self.participants)
-                    .map_err(|_| Errors::InvalidMessage)?,
-                u16::try_from(self.threshold)
-                    .map_err(|_| Errors::InvalidMessage)?,
+                u16::try_from(self.participants).map_err(
+                    |error: TryFromIntError| {
+                        Errors::InvalidMessage(format!(
+                            "Failed to convert participants count to u16: {}",
+                            error
+                        ))
+                    },
+                )?,
+                u16::try_from(self.threshold).map_err(
+                    |error: TryFromIntError| {
+                        Errors::InvalidMessage(format!(
+                            "Failed to convert threshold to u16: {}",
+                            error
+                        ))
+                    },
+                )?,
                 OsRng,
             )
-            .map_err(|_| Errors::InvalidMessage)?;
+            .map_err(|error: Error| {
+                Errors::InvalidMessage(format!(
+                    "Failed to generate round 1 secret and package: {}",
+                    error
+                ))
+            })?;
 
         self.round1_secret = Some(secret);
         self.round = 1;
 
         let payload: Vec<u8> = encode_wire(&FrostWire::DkgRound1Package {
             identifier: self.identifier_u32,
-            package: to_allocvec(&package)
-                .map_err(|_| Errors::InvalidMessage)?,
+            package: to_allocvec(&package).map_err(
+                |error: PostcardError| {
+                    Errors::InvalidMessage(format!(
+                        "Failed to encode round 1 package: {}",
+                        error
+                    ))
+                },
+            )?,
         })?;
 
         Ok(Some(RoundMessage {
@@ -210,11 +248,16 @@ impl Protocol for FrostSchnorrSecp256k1NodeKeyGeneration {
         message: RoundMessage,
     ) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Errors::Aborted);
+            return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
-        let wire: FrostWire = decode_wire(&message.payload)
-            .map_err(|_| Errors::InvalidMessage)?;
+        let wire: FrostWire =
+            decode_wire(&message.payload).map_err(|error: Errors| {
+                Errors::InvalidMessage(format!(
+                    "Failed to decode wire message: {}",
+                    error
+                ))
+            })?;
 
         match (self.round, message.round, wire) {
             // Round 1: receive round1 packages from others.
@@ -232,15 +275,31 @@ impl Protocol for FrostSchnorrSecp256k1NodeKeyGeneration {
                     }
 
                     let from_identifier: Identifier = Identifier::try_from(
-                        u16::try_from(from_u32)
-                            .map_err(|_| Errors::InvalidMessage)?,
+                        u16::try_from(from_u32).map_err(
+                            |error: TryFromIntError| {
+                                Errors::InvalidMessage(format!(
+                                    "Failed to convert from_u32 to u16: {}",
+                                    error
+                                ))
+                            },
+                        )?,
                     )
-                    .map_err(|_| Errors::InvalidMessage)?;
+                    .map_err(|error: Error| {
+                        Errors::InvalidMessage(format!(
+                            "Failed to create Identifier from u16: {}",
+                            error
+                        ))
+                    })?;
 
                     self.identifier_map.insert(from_identifier, from_u32);
 
                     let package: round1::Package = from_bytes(&bytes)
-                        .map_err(|_| Errors::InvalidMessage)?;
+                        .map_err(|error: PostcardError| {
+                            Errors::InvalidMessage(format!(
+                                "Failed to decode round 1 package: {}",
+                                error
+                            ))
+                        })?;
                     self.received_round1.insert(from_identifier, package);
                 }
 
@@ -259,8 +318,14 @@ impl Protocol for FrostSchnorrSecp256k1NodeKeyGeneration {
                 let (round2_secret, round2_output): (
                     round2::SecretPackage,
                     BTreeMap<Identifier, round2::Package>,
-                ) = part2(secret, &self.received_round1)
-                    .map_err(|_| Errors::InvalidMessage)?;
+                ) = part2(secret, &self.received_round1).map_err(
+                    |error: Error| {
+                        Errors::InvalidMessage(format!(
+                            "Failed to generate round 2 output: {}",
+                            error
+                        ))
+                    },
+                )?;
 
                 self.round2_secret = Some(round2_secret);
 
@@ -271,9 +336,18 @@ impl Protocol for FrostSchnorrSecp256k1NodeKeyGeneration {
                         *self
                             .identifier_map
                             .get(&to_id)
-                            .ok_or(Errors::InvalidMessage)?,
-                        to_allocvec(&package)
-                            .map_err(|_| Errors::InvalidMessage)?,
+                            .ok_or(Errors::InvalidMessage(
+                            "Missing identifier mapping for round 2 output."
+                                .into(),
+                        ))?,
+                        to_allocvec(&package).map_err(
+                            |error: PostcardError| {
+                                Errors::InvalidMessage(format!(
+                                    "Failed to encode round 2 package: {}",
+                                    error
+                                ))
+                            },
+                        )?,
                     ));
                 }
 
@@ -304,15 +378,31 @@ impl Protocol for FrostSchnorrSecp256k1NodeKeyGeneration {
                     }
 
                     let from_identifier: Identifier = Identifier::try_from(
-                        u16::try_from(from_u32)
-                            .map_err(|_| Errors::InvalidMessage)?,
+                        u16::try_from(from_u32).map_err(
+                            |error: TryFromIntError| {
+                                Errors::InvalidMessage(format!(
+                                    "Failed to convert from_u32 to u16: {}",
+                                    error
+                                ))
+                            },
+                        )?,
                     )
-                    .map_err(|_| Errors::InvalidMessage)?;
+                    .map_err(|error: Error| {
+                        Errors::InvalidMessage(format!(
+                            "Failed to convert u16 to Identifier: {}",
+                            error
+                        ))
+                    })?;
 
                     self.identifier_map.insert(from_identifier, from_u32);
 
                     let package: round2::Package = from_bytes(&bytes)
-                        .map_err(|_| Errors::InvalidMessage)?;
+                        .map_err(|error: PostcardError| {
+                            Errors::InvalidMessage(format!(
+                                "Failed to decode round 2 package: {}",
+                                error
+                            ))
+                        })?;
                     self.received_round2.insert(from_identifier, package);
                 }
 
@@ -337,16 +427,25 @@ impl Protocol for FrostSchnorrSecp256k1NodeKeyGeneration {
                     &self.received_round1,
                     &self.received_round2,
                 )
-                .map_err(|_| Errors::InvalidMessage)?;
+                .map_err(|error: Error| {
+                    Errors::InvalidMessage(format!(
+                        "Failed to finalize DKG: {}",
+                        error
+                    ))
+                })?;
 
                 self.key_package = Some(key_package);
                 self.public_key_package = Some(public_key_package);
-                self.round = 3;
 
-                Ok(None)
+                Ok(Some(RoundMessage {
+                    round: 2,
+                    from: Some(self.identifier_u32),
+                    to: None,
+                    payload: vec![],
+                }))
             },
 
-            _ => Err(Errors::InvalidMessage),
+            _ => Err(Errors::InvalidMessage("Unexpected message.".into())),
         }
     }
 
@@ -370,24 +469,52 @@ impl Protocol for FrostSchnorrSecp256k1NodeKeyGeneration {
 
         let stored: FrostStoredKey = FrostStoredKey {
             identifier: self.identifier_u32,
-            key_package: to_allocvec(&key_package)
-                .map_err(|_| Errors::InvalidMessage)?,
-            public_key_package: to_allocvec(&public_key_package)
-                .map_err(|_| Errors::InvalidMessage)?,
+            key_package: to_allocvec(&key_package).map_err(
+                |error: PostcardError| {
+                    Errors::InvalidMessage(format!(
+                        "Failed to convert key package to allocvec: {}",
+                        error
+                    ))
+                },
+            )?,
+            public_key_package: to_allocvec(&public_key_package).map_err(
+                |error: PostcardError| {
+                    Errors::InvalidMessage(format!(
+                        "Failed to convert public key package to allocvec: {}",
+                        error
+                    ))
+                },
+            )?,
         };
 
-        let archived: AlignedVec = rkyv::to_bytes::<RkyvError>(&stored)
-            .map_err(|_| Errors::InvalidMessage)?;
+        let archived: AlignedVec =
+            to_bytes::<RkyvError>(&stored).map_err(|error: RkyvError| {
+                Errors::InvalidMessage(format!(
+                    "Failed to convert stored key to bytes: {}",
+                    error
+                ))
+            })?;
 
         Ok(ProtocolOutput::KeyGeneration {
             key_id: self.key_id.clone(),
-            key_share: Secret::new(archived.to_vec()),
+            key_share: Some(Secret::new(archived.to_vec())),
             public_key: public_key_package
                 .verifying_key()
                 .serialize()
-                .map_err(|_| Errors::InvalidMessage)?,
-            public_key_package: to_allocvec(&public_key_package)
-                .map_err(|_| Errors::InvalidMessage)?,
+                .map_err(|error: Error| {
+                    Errors::InvalidMessage(format!(
+                        "Failed to serialize public key: {}",
+                        error
+                    ))
+                })?,
+            public_key_package: to_allocvec(&public_key_package).map_err(
+                |error: PostcardError| {
+                    Errors::InvalidMessage(format!(
+                        "Failed to convert public key package to allocvec: {}",
+                        error
+                    ))
+                },
+            )?,
         })
     }
 

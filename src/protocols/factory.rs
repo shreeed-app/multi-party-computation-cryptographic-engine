@@ -4,14 +4,17 @@ use crate::{
     protocols::{
         algorithm::Algorithm,
         cggmp24::node::tasks::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1NodeSigning,
-        frost::node::{
-            keys::{
-                ed25519::FrostEd25519NodeKeyGeneration,
-                schnorr_secp256k1::FrostSchnorrSecp256k1NodeKeyGeneration,
-            },
-            tasks::{
-                ed25519::FrostEd25519NodeSigning,
-                schnorr_secp256k1::FrostSchnorrSecp256k1NodeSigning,
+        frost::{
+            controller::keys::ed25519::FrostEd25519ControllerKeyGeneration,
+            node::{
+                keys::{
+                    ed25519::FrostEd25519NodeKeyGeneration,
+                    schnorr_secp256k1::FrostSchnorrSecp256k1NodeKeyGeneration,
+                },
+                tasks::{
+                    ed25519::FrostEd25519NodeSigning,
+                    schnorr_secp256k1::FrostSchnorrSecp256k1NodeSigning,
+                },
             },
         },
         protocol::Protocol,
@@ -69,10 +72,20 @@ impl ProtocolFactory {
                     )),
                 },
 
-                KeyGenerationInit::Controller(_) => {
-                    Err(Errors::UnsupportedAlgorithm(
-                        "Controller key generation not implemented".into(),
-                    ))
+                KeyGenerationInit::Controller(init) => {
+                    match init.common.algorithm {
+                        // Frost ed25519 node key generation.
+                        Algorithm::FrostEd25519 => Ok(Box::new(
+                            FrostEd25519ControllerKeyGeneration::try_new(
+                                ProtocolInit::KeyGeneration(
+                                    KeyGenerationInit::Controller(init),
+                                ),
+                            )?,
+                        )),
+                        _ => Err(Errors::UnsupportedAlgorithm(
+                            init.common.algorithm.as_str().into(),
+                        )),
+                    }
                 },
             },
 
@@ -100,7 +113,7 @@ impl ProtocolFactory {
 
                 SigningInit::Controller(_) => {
                     Err(Errors::UnsupportedAlgorithm(
-                        "Controller signing not implemented".into(),
+                        "Controller signing not implemented.".into(),
                     ))
                 },
             },

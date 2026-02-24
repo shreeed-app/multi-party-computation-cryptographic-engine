@@ -19,37 +19,36 @@ impl From<Errors> for Status {
         let code: Code = match error {
             Errors::InvalidArgument(_) => Code::InvalidArgument,
 
-            Errors::MissingAuthorization
+            Errors::MissingAuthorization(_)
             | Errors::Unauthorized
             | Errors::InvalidAuthorizationEncoding
-            | Errors::InvalidToken => Code::Unauthenticated,
+            | Errors::InvalidToken(_) => Code::Unauthenticated,
 
-            Errors::SessionNotFound(_) | Errors::KeyNotFound => Code::NotFound,
+            Errors::SessionNotFound(_) => Code::NotFound,
 
             Errors::SessionStateInitialized(_)
             | Errors::SessionStateInProgress(_, _)
             | Errors::SessionStateFinalized
             | Errors::SessionStateNotFinalized
-            | Errors::InvalidKeyShare
+            | Errors::InvalidKeyShare(_)
             | Errors::InvalidState(_)
             | Errors::InvalidRound(_)
-            | Errors::InvalidParticipant
-            | Errors::InvalidThreshold
-            | Errors::InvalidProtocolInit
-            | Errors::InvalidMessage => Code::FailedPrecondition,
+            | Errors::InvalidParticipant(_)
+            | Errors::InvalidThreshold(_, _)
+            | Errors::InvalidProtocolInit(_)
+            | Errors::InvalidMessage(_) => Code::FailedPrecondition,
 
             Errors::UnsupportedAlgorithm(_) => Code::Unimplemented,
 
-            Errors::Aborted => Code::Aborted,
+            Errors::Aborted(_) => Code::Aborted,
 
             Errors::Internal(_)
             | Errors::Generic(_)
-            | Errors::FailedToSign
-            | Errors::InvalidSignature
-            | Errors::VaultTokenMissing
-            | Errors::VaultConfigError
-            | Errors::VaultError
-            | Errors::LiveLockAcquireError
+            | Errors::FailedToSign(_)
+            | Errors::InvalidSignature(_)
+            | Errors::VaultConfigError(_)
+            | Errors::VaultError(_)
+            | Errors::LiveLockAcquireError(_)
             | Errors::ConfigError(_) => Code::Internal,
         };
 

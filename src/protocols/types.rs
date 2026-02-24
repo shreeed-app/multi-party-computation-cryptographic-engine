@@ -100,6 +100,9 @@ pub struct NodeKeyGenerationInit {
 pub struct ControllerKeyGenerationInit {
     /// Common key generation initialization parameters.
     pub common: DefaultKeyGenerationInit,
+    /// Participant identifiers and addresses of all participants (including
+    /// self).
+    pub nodes: Vec<NodeIpcClient>,
 }
 
 /// Message exchanged between participants during protocol execution.
@@ -132,14 +135,13 @@ pub enum Signature {
 }
 
 /// Final output of a protocol execution.
-#[derive(Debug)]
 pub enum ProtocolOutput {
     /// Result of a key generation protocol.
     KeyGeneration {
         /// Unique key identifier.
         key_id: String,
         /// Blob to be stored locally (protocol-specific).
-        key_share: KeyShare,
+        key_share: Option<KeyShare>,
         /// Public key bytes (curve-specific, canonical format).
         public_key: Vec<u8>,
         /// Serialized protocol-specific public key package.

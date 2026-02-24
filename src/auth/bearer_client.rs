@@ -1,12 +1,16 @@
 //! Authentication components ensuring authentication between controller and
 //! nodes.
 
-use headers::{Authorization, authorization::Bearer};
-use http::header::AUTHORIZATION;
+use headers::{
+    Authorization,
+    Header,
+    authorization::{Bearer, InvalidBearerToken},
+};
+use http::{HeaderValue, header::AUTHORIZATION};
 use tonic::{
     Request,
     Status,
-    metadata::{Ascii, MetadataValue},
+    metadata::{Ascii, MetadataValue, errors::InvalidMetadataValueBytes},
     service::Interceptor,
 };
 
@@ -38,13 +42,38 @@ impl Interceptor for ClientAuthInterceptor {
         &mut self,
         mut request: Request<()>,
     ) -> Result<Request<()>, Status> {
-        let value: Authorization<Bearer> =
-            Authorization::bearer(&self.config.token)
-                .map_err(|_| Errors::InvalidToken)?;
+        let auth: Authorization<Bearer> = Authorization::bearer(
+            &self.config.token,
+        )
+        .map_err(|error: InvalidBearerToken| {
+            Errors::InvalidToken(format!(
+                "Failed to create Bearer authorization: {}",
+                error
+            ))
+        })?;
 
-        let metadata_value: MetadataValue<Ascii> =
-            MetadataValue::try_from(value.token())
-                .map_err(|_| Errors::InvalidToken)?;
+        // Encode the Authorization header value.
+        let mut values: Vec<HeaderValue> = Vec::new();
+        auth.encode(&mut values);
+
+        // Take the first header value (there should only be one) and convert
+        // it to a MetadataValue for gRPC metadata.
+        let header_value: HeaderValue =
+            values.into_iter().next().ok_or(Errors::InvalidToken(
+                "Failed to extract Authorization header value.".into(),
+            ))?;
+
+        // Convert the header value to a MetadataValue for gRPC metadata.
+        let metadata_value: MetadataValue<Ascii> = MetadataValue::try_from(
+            header_value.as_bytes(),
+        )
+        .map_err(|error: InvalidMetadataValueBytes| {
+            Errors::InvalidToken(format!(
+                "Failed to convert Authorization header value to 
+                MetadataValue, got error: {}",
+                error
+            ))
+        })?;
 
         request.metadata_mut().insert(AUTHORIZATION.as_str(), metadata_value);
 

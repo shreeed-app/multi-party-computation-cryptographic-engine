@@ -1,5 +1,7 @@
 //! CGGMP24 ECDSA Secp256k1 signing protocol implementation.
 
+use std::{array::TryFromSliceError, num::TryFromIntError};
+
 use async_trait::async_trait;
 use cggmp24::{
     DataToSign,
@@ -7,8 +9,13 @@ use cggmp24::{
     key_share::KeyShare,
     signing::msg::Msg,
 };
-use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey};
+use crossbeam_channel::{Receiver, SendError, Sender, bounded, unbounded};
+use k256::ecdsa::{
+    Error as EcdsaError,
+    RecoveryId,
+    Signature as K256Signature,
+    VerifyingKey,
+};
 use rkyv::{Archived, access, deserialize, rancor::Error as RkyvError};
 use round_based::{
     Incoming,
@@ -17,7 +24,7 @@ use round_based::{
     MsgId,
     Outgoing,
 };
-use serde_json::{from_slice, to_vec};
+use serde_json::{Error, from_slice, to_vec};
 use sha2::{Digest, Sha256, digest::Output};
 
 use crate::{
@@ -89,7 +96,11 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
     pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
         let init: NodeSigningInit = match protocol_init {
             ProtocolInit::Signing(SigningInit::Node(init)) => init,
-            _ => return Err(Errors::InvalidProtocolInit),
+            _ => {
+                return Err(Errors::InvalidProtocolInit(
+                    "Expected NodeSigningInit struct.".into(),
+                ));
+            },
         };
 
         if init.common.algorithm != Algorithm::Cggmp24EcdsaSecp256k1 {
@@ -105,25 +116,45 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
                         bytes,
                     ) {
                         Ok(archived) => archived,
-                        Err(_) => return Err(Errors::InvalidKeyShare),
+                        Err(error) => {
+                            return Err(Errors::InvalidKeyShare(format!(
+                                "Failed to access archived stored key: {}",
+                                error
+                            )));
+                        },
                     };
-                deserialize::<Cggmp24StoredKey, RkyvError>(archived)
-                    .map_err(|_| Errors::InvalidKeyShare)
+                deserialize::<Cggmp24StoredKey, RkyvError>(archived).map_err(
+                    |error: RkyvError| {
+                        Errors::InvalidKeyShare(format!(
+                            "Failed to deserialize stored key: {}",
+                            error
+                        ))
+                    },
+                )
             })?;
 
         let key_share: KeyShare<CggmpSecp256k1> =
-            from_slice(&stored.key_share_json)
-                .map_err(|_| Errors::InvalidKeyShare)?;
+            from_slice(&stored.key_share_json).map_err(|error: Error| {
+                Errors::InvalidKeyShare(format!(
+                    "Failed to deserialize key share: {}",
+                    error
+                ))
+            })?;
 
         if init.common.message.len() != 32 {
-            return Err(Errors::InvalidMessage);
+            return Err(Errors::InvalidMessage(
+                "Message must be exactly 32 bytes (SHA-256 digest).".into(),
+            ));
         }
 
         // Validate threshold and participants.
         if init.common.threshold == 0
             || init.common.threshold > init.common.participants
         {
-            return Err(Errors::InvalidThreshold);
+            return Err(Errors::InvalidThreshold(
+                init.common.threshold,
+                init.common.participants,
+            ));
         }
 
         // Deterministic signer selection for CGGMP24.
@@ -173,12 +204,19 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
         let bytes: [u8; 8] = digest
             .get(0..8)
             .and_then(|slice: &[u8]| slice.try_into().ok())
-            .ok_or(Errors::InvalidMessage)?;
+            .ok_or(Errors::InvalidMessage(
+                "Failed to extract 8 bytes from SHA-256 digest.".into(),
+            ))?;
 
         let start: u16 = u16::try_from(
             u64::from_be_bytes(bytes) % init.common.participants as u64,
         )
-        .map_err(|_| Errors::InvalidMessage)?;
+        .map_err(|error: TryFromIntError| {
+            Errors::InvalidMessage(format!(
+                "Failed to convert hash to start index: {}",
+                error
+            ))
+        })?;
 
         // Build the signer set as `threshold` consecutive
         // participant identifiers.
@@ -186,9 +224,22 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
             Vec::with_capacity(init.common.threshold as usize);
         for index in 0..init.common.threshold {
             let party_id: u16 = (start
-                + u16::try_from(index).map_err(|_| Errors::InvalidMessage)?)
-                % u16::try_from(init.common.participants)
-                    .map_err(|_| Errors::InvalidMessage)?;
+                + u16::try_from(index).map_err(
+                    |error: TryFromIntError| {
+                        Errors::InvalidMessage(format!(
+                            "Failed to convert index to u16: {}",
+                            error
+                        ))
+                    },
+                )?)
+                % u16::try_from(init.common.participants).map_err(
+                    |error: TryFromIntError| {
+                        Errors::InvalidMessage(format!(
+                            "Failed to convert participants count to u16: {}",
+                            error
+                        ))
+                    },
+                )?;
             parties.push(party_id);
         }
 
@@ -200,7 +251,11 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
         // contract by starting a signing session on a node that is not
         // selected by the deterministic signer selection rule.
         if !parties.contains(&stored.identifier) {
-            return Err(Errors::InvalidParticipant);
+            return Err(Errors::InvalidParticipant(
+                "Local participant is not part of the signer set derived from 
+                key_id. Check that the controller is configured correctly."
+                    .into(),
+            ));
         }
 
         // Prepare data to be signed as a digest.
@@ -268,7 +323,12 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
     ) -> Result<RoundMessage, Errors> {
         // Serialize the CGGMP message.
         let inner: Vec<u8> =
-            to_vec(&outgoing.msg).map_err(|_| Errors::InvalidMessage)?;
+            to_vec(&outgoing.msg).map_err(|error: Error| {
+                Errors::InvalidMessage(format!(
+                    "Failed to serialize CGGMP message: {}",
+                    error
+                ))
+            })?;
 
         // Wrap into CGGMP24 wire format.
         let wire: Cggmp24Wire =
@@ -351,7 +411,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
     /// * `Option<RoundMessage>` - Message to send for the next round, if any.
     async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Errors::Aborted);
+            return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
         // Try to receive an outgoing message from the worker.
@@ -378,7 +438,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
         round_message: RoundMessage,
     ) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Errors::Aborted);
+            return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
         // Decode the incoming round message payload.
@@ -386,13 +446,23 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
             decode_wire(&round_message.payload)?;
         // Deserialize the CGGMP message.
         let message: CggmpSigningMessage =
-            from_slice(&payload).map_err(|_| Errors::InvalidMessage)?;
+            from_slice(&payload).map_err(|error: Error| {
+                Errors::InvalidMessage(format!(
+                    "Failed to deserialize CGGMP message: {}",
+                    error
+                ))
+            })?;
 
         let sender_u16: u16 = round_message
             .from
-            .ok_or(Errors::InvalidMessage)?
+            .ok_or(Errors::InvalidMessage("Missing sender.".into()))?
             .try_into()
-            .map_err(|_| Errors::InvalidMessage)?;
+            .map_err(|error: TryFromIntError| {
+                Errors::InvalidMessage(format!(
+                    "Failed to convert sender identifier to u16: {}",
+                    error
+                ))
+            })?;
 
         let incoming: Incoming<Msg<CggmpSecp256k1, Sha256>> = Incoming {
             id: round_message.round as MsgId,
@@ -407,9 +477,14 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
         };
 
         // Send the incoming message to the worker.
-        self.incoming_transmitter
-            .send(incoming)
-            .map_err(|_| Errors::Aborted)?;
+        self.incoming_transmitter.send(incoming).map_err(
+            |error: SendError<Incoming<CggmpSigningMessage>>| {
+                Errors::Aborted(format!(
+                    "Failed to send incoming message: {}",
+                    error
+                ))
+            },
+        )?;
 
         // Check if there are pending outputs first, return them before
         // checking outgoing channel.
@@ -429,29 +504,46 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
         match self.done_receiver.recv() {
             Ok(WorkerDone::Ok(signature)) => {
                 // Convert k256 signature to r, s, v components.
-                let r: [u8; 32] = signature
-                    .r
-                    .to_be_bytes()
-                    .as_bytes()
-                    .try_into()
-                    .map_err(|_| Errors::InvalidSignature)?;
+                let r: [u8; 32] =
+                    signature.r.to_be_bytes().as_bytes().try_into().map_err(
+                        |error: TryFromSliceError| {
+                            Errors::InvalidSignature(format!(
+                                "Failed to convert r component to array: {}",
+                                error
+                            ))
+                        },
+                    )?;
 
-                let s: [u8; 32] = signature
-                    .s
-                    .to_be_bytes()
-                    .as_bytes()
-                    .try_into()
-                    .map_err(|_| Errors::InvalidSignature)?;
+                let s: [u8; 32] =
+                    signature.s.to_be_bytes().as_bytes().try_into().map_err(
+                        |error: TryFromSliceError| {
+                            Errors::InvalidSignature(format!(
+                                "Failed to convert s component to array: {}",
+                                error
+                            ))
+                        },
+                    )?;
 
                 // Reconstruct K256 signature.
-                let signature: K256Signature =
-                    K256Signature::from_scalars(r, s)
-                        .map_err(|_| Errors::InvalidSignature)?;
+                let signature: K256Signature = K256Signature::from_scalars(
+                    r, s,
+                )
+                .map_err(|error: EcdsaError| {
+                    Errors::InvalidSignature(format!(
+                        "Failed to reconstruct K256 signature: {}",
+                        error
+                    ))
+                })?;
 
                 // Reconstruct verifying key from public key bytes.
                 let verifying_key: VerifyingKey =
                     VerifyingKey::from_sec1_bytes(&self.public_key_bytes)
-                        .map_err(|_| Errors::InvalidSignature)?;
+                        .map_err(|error: EcdsaError| {
+                            Errors::InvalidSignature(format!(
+                                "Failed to reconstruct verifying key: {}",
+                                error
+                            ))
+                        })?;
 
                 // Recover recovery identifier.
                 let recovery_id: RecoveryId =
@@ -460,7 +552,12 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                         &self.message_bytes,
                         &signature,
                     )
-                    .map_err(|_| Errors::InvalidSignature)?;
+                    .map_err(|error: EcdsaError| {
+                        Errors::InvalidSignature(format!(
+                            "Failed to recover recovery identifier: {}",
+                            error
+                        ))
+                    })?;
 
                 Ok(ProtocolOutput::Signature(FinalSignature::Ecdsa(
                     EcdsaSignature {
@@ -470,7 +567,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                     },
                 )))
             },
-            _ => Err(Errors::FailedToSign),
+            _ => {
+                Err(Errors::FailedToSign("Protocol execution failed.".into()))
+            },
         }
     }
 

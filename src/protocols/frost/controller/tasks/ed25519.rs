@@ -1,9 +1,13 @@
 //! FROST-ed25519 controller-side signing task.
 
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    num::TryFromIntError,
+};
 
 use async_trait::async_trait;
 use frost_ed25519::{
+    Error,
     Identifier,
     Signature,
     SigningPackage,
@@ -13,7 +17,7 @@ use frost_ed25519::{
     round2::SignatureShare,
 };
 use futures::stream::{FuturesUnordered, StreamExt};
-use postcard::{from_bytes, to_allocvec};
+use postcard::{Error as PostcardError, from_bytes, to_allocvec};
 
 use crate::{
     proto::signer::v1::{
@@ -92,13 +96,23 @@ impl FrostEd25519ControllerSigning {
     pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
         let init: ControllerSigningInit = match protocol_init {
             ProtocolInit::Signing(SigningInit::Controller(init)) => init,
-            _ => return Err(Errors::InvalidProtocolInit),
+            _ => return Err(Errors::InvalidProtocolInit(
+                "Invalid protocol initialization context for FROST(ed25519) 
+                controller signing."
+                    .into(),
+            )),
         };
 
         // Retrieve public key package from initialization context.
-        let public_key_package: PublicKeyPackage =
-            from_bytes(&init.public_key_package)
-                .map_err(|_| Errors::InvalidMessage)?;
+        let public_key_package: PublicKeyPackage = from_bytes(
+            &init.public_key_package,
+        )
+        .map_err(|error: PostcardError| {
+            Errors::InvalidMessage(format!(
+                "Failed to decode public key package: {}",
+                error
+            ))
+        })?;
 
         Ok(Self {
             algorithm: Algorithm::FrostEd25519,
@@ -130,14 +144,21 @@ impl FrostEd25519ControllerSigning {
             .nodes
             .iter()
             .map(|node: &NodeIpcClient| {
-                node.participant_id().ok_or(Errors::InvalidParticipant)
+                node.participant_id().ok_or(Errors::InvalidParticipant(
+                    "Failed to extract participant ID from node client."
+                        .into(),
+                ))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         identifiers.sort();
 
         if identifiers.len() != self.participants as usize {
-            return Err(Errors::InvalidParticipant);
+            return Err(Errors::InvalidParticipant(
+                "Number of participant IDs does not match expected 
+                participants."
+                    .into(),
+            ));
         }
 
         Ok(identifiers)
@@ -166,7 +187,10 @@ impl FrostEd25519ControllerSigning {
             .find(|node: &&mut NodeIpcClient| {
                 node.participant_id() == Some(identifier)
             })
-            .ok_or(Errors::InvalidParticipant)
+            .ok_or(Errors::InvalidParticipant(format!(
+                "Participant ID {} not found among node clients.",
+                identifier
+            )))
     }
 
     /// Helper method to create a scoped key ID for participant communication.
@@ -206,7 +230,10 @@ impl FrostEd25519ControllerSigning {
                 .find(|node: &&NodeIpcClient| {
                     node.participant_id() == Some(identifier)
                 })
-                .ok_or(Errors::InvalidParticipant)?
+                .ok_or(Errors::InvalidParticipant(format!(
+                    "Participant ID {} not found among node clients.",
+                    identifier
+                )))?
                 .clone();
 
             let request: StartSigningSessionRequest =
@@ -235,24 +262,44 @@ impl FrostEd25519ControllerSigning {
 
             self.sessions.insert(identifier, start.session_id);
 
-            let wire: FrostWire = decode_wire(&start.payload)
-                .map_err(|_| Errors::InvalidMessage)?;
+            let wire: FrostWire =
+                decode_wire(&start.payload).map_err(|error: Errors| {
+                    Errors::InvalidMessage(format!(
+                        "Failed to decode FROST wire message: {}",
+                        error
+                    ))
+                })?;
 
             match wire {
                 FrostWire::Commitments { identifier, commitments } => {
                     let identifier: Identifier = Identifier::try_from(
-                        u16::try_from(identifier)
-                            .map_err(|_| Errors::InvalidParticipant)?,
+                        u16::try_from(identifier).map_err(
+                            |error: TryFromIntError| {
+                                Errors::InvalidParticipant(error.to_string())
+                            },
+                        )?,
                     )
-                    .map_err(|_| Errors::InvalidParticipant)?;
+                    .map_err(|error: Error| {
+                        Errors::InvalidParticipant(error.to_string())
+                    })?;
 
-                    let commitments: SigningCommitments =
-                        from_bytes(&commitments)
-                            .map_err(|_| Errors::InvalidMessage)?;
+                    let commitments: SigningCommitments = from_bytes(
+                        &commitments,
+                    )
+                    .map_err(|error: PostcardError| {
+                        Errors::InvalidMessage(format!(
+                            "Failed to decode signing commitments: {}",
+                            error
+                        ))
+                    })?;
 
                     self.commitments.insert(identifier, commitments);
                 },
-                _ => return Err(Errors::InvalidMessage),
+                _ => {
+                    return Err(Errors::InvalidMessage(
+                        "Unexpected message type in round 1.".into(),
+                    ));
+                },
             }
         }
 
@@ -275,7 +322,12 @@ impl FrostEd25519ControllerSigning {
             SigningPackage::new(self.commitments.clone(), &self.message);
 
         let signing_package_bytes: Vec<u8> = to_allocvec(&signing_package)
-            .map_err(|_| Errors::InvalidMessage)?;
+            .map_err(|error: PostcardError| {
+                Errors::InvalidMessage(format!(
+                    "Failed to encode signing package: {}",
+                    error
+                ))
+            })?;
 
         let payload: Vec<u8> = encode_wire(&FrostWire::SigningPackage {
             signing_package: signing_package_bytes,
@@ -326,8 +378,13 @@ impl FrostEd25519ControllerSigning {
                 .await
                 .map_err(map_status)?;
 
-            let wire: FrostWire = decode_wire(&response.payload)
-                .map_err(|_| Errors::InvalidMessage)?;
+            let wire: FrostWire =
+                decode_wire(&response.payload).map_err(|error: Errors| {
+                    Errors::InvalidMessage(format!(
+                        "Failed to decode FROST wire message: {}",
+                        error
+                    ))
+                })?;
 
             match wire {
                 FrostWire::SignatureShare { identifier, signature_share } => {
@@ -335,17 +392,27 @@ impl FrostEd25519ControllerSigning {
                     // signature share.
                     let identifier: Identifier = Identifier::try_from(
                         u16::try_from(identifier)
-                            .map_err(|_| Errors::InvalidParticipant)?,
+                            .map_err(|error: TryFromIntError| Errors::InvalidParticipant(error.to_string()))?,
                     )
-                    .map_err(|_| Errors::InvalidParticipant)?;
+                    .map_err(|error: Error| Errors::InvalidParticipant(format!("Failed to convert participant ID to FROST identifier: {}", error)))?;
 
-                    let share: SignatureShare =
-                        from_bytes(&signature_share)
-                            .map_err(|_| Errors::InvalidMessage)?;
+                    let share: SignatureShare = from_bytes(&signature_share)
+                        .map_err(
+                        |error: PostcardError| {
+                            Errors::InvalidMessage(format!(
+                                "Failed to decode signature share: {}",
+                                error
+                            ))
+                        },
+                    )?;
 
                     self.shares.insert(identifier, share);
                 },
-                _ => return Err(Errors::InvalidMessage),
+                _ => {
+                    return Err(Errors::InvalidMessage(
+                        "Unexpected message type in round 2.".into(),
+                    ));
+                },
             }
         }
 
@@ -369,12 +436,22 @@ impl FrostEd25519ControllerSigning {
             &self.shares,
             &self.public_key_package,
         )
-        .map_err(|_| Errors::InvalidSignature)?;
+        .map_err(|error: Error| {
+            Errors::InvalidSignature(format!(
+                "Failed to aggregate signature shares: {}",
+                error
+            ))
+        })?;
 
         self.output = Some(ProtocolOutput::Signature(FinalSignature::Raw(
             match signature.serialize() {
                 Ok(bytes) => bytes.to_vec(),
-                Err(_) => return Err(Errors::InvalidSignature),
+                Err(error) => {
+                    return Err(Errors::InvalidSignature(format!(
+                        "Failed to serialize signature: {}",
+                        error
+                    )));
+                },
             },
         )));
 
@@ -422,7 +499,7 @@ impl Protocol for FrostEd25519ControllerSigning {
     /// * `Error::Aborted` - If the protocol has been aborted.
     async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Errors::Aborted);
+            return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
         if self.round != 0 {

@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 
+use strum::ParseError;
 use tonic::{Request, Response, Status};
 use tracing::instrument;
 
@@ -79,10 +80,11 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
         let algorithm: Algorithm =
             match Algorithm::from_str(&request.algorithm) {
                 Ok(algorithm) => algorithm,
-                Err(_) => {
-                    return Err(Errors::UnsupportedAlgorithm(
-                        request.algorithm.clone(),
-                    )
+                Err(error) => {
+                    return Err(Errors::UnsupportedAlgorithm(format!(
+                        "Failed to parse algorithm: {}",
+                        error
+                    ))
                     .into());
                 },
             };
@@ -95,6 +97,7 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
                     threshold: request.threshold,
                     participants: request.participants,
                 },
+                nodes: self.nodes.clone(),
             }),
         );
 
@@ -150,10 +153,11 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
                 common: DefaultSigningInit {
                     key_id: request.key_id.clone(),
                     algorithm: Algorithm::from_str(&request.algorithm)
-                        .map_err(|_| {
-                            Errors::UnsupportedAlgorithm(
-                                request.algorithm.clone(),
-                            )
+                        .map_err(|error: ParseError| {
+                            Errors::UnsupportedAlgorithm(format!(
+                                "Failed to parse algorithm: {}",
+                                error
+                            ))
                         })?,
                     threshold: request.threshold,
                     participants: request.participants,

@@ -1,8 +1,10 @@
 //! CGGMP24 ECDSA Secp256k1 key generation protocol implementation.
 
+use std::num::TryFromIntError;
+
 use async_trait::async_trait;
-use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use rkyv::rancor::Error as RkyvError;
+use crossbeam_channel::{Receiver, SendError, Sender, bounded, unbounded};
+use rkyv::{rancor::Error as RkyvError, to_bytes};
 use round_based::{
     Incoming,
     MessageDestination,
@@ -10,7 +12,7 @@ use round_based::{
     MsgId,
     Outgoing,
 };
-use serde_json::{from_slice, to_vec};
+use serde_json::{Error, from_slice, to_vec};
 
 use crate::{
     protocols::{
@@ -82,7 +84,11 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
         let init: NodeKeyGenerationInit = match protocol_init {
             ProtocolInit::KeyGeneration(KeyGenerationInit::Node(init)) => init,
-            _ => return Err(Errors::InvalidProtocolInit),
+            _ => {
+                return Err(Errors::InvalidProtocolInit(
+                    "Expected NodeKeyGenerationInit struct.".into(),
+                ));
+            },
         };
 
         if init.common.algorithm != Algorithm::Cggmp24EcdsaSecp256k1 {
@@ -95,24 +101,42 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
         if init.common.threshold == 0
             || init.common.threshold > init.common.participants
         {
-            return Err(Errors::InvalidThreshold);
+            return Err(Errors::InvalidThreshold(
+                init.common.threshold,
+                init.common.participants,
+            ));
         }
 
         // CGGMP24 key generation uses indices i in [0, n).
-        let identifier: u16 = init
-            .identifier
-            .try_into()
-            .map_err(|_| Errors::InvalidProtocolInit)?;
+        let identifier: u16 =
+            init.identifier.try_into().map_err(|error: TryFromIntError| {
+                Errors::InvalidProtocolInit(format!(
+                    "Identifier out of range, got error: {}",
+                    error
+                ))
+            })?;
 
         let participants_u16: u16 = u16::try_from(init.common.participants)
-            .map_err(|_| Errors::InvalidProtocolInit)?;
+            .map_err(|error: TryFromIntError| {
+                Errors::InvalidProtocolInit(format!(
+                    "Participants count out of range, got error: {}",
+                    error
+                ))
+            })?;
 
         if identifier >= participants_u16 {
-            return Err(Errors::InvalidProtocolInit);
+            return Err(Errors::InvalidProtocolInit(
+                "Identifier out of range.".into(),
+            ));
         }
 
         let threshold_u16: u16 = u16::try_from(init.common.threshold)
-            .map_err(|_| Errors::InvalidProtocolInit)?;
+            .map_err(|error: TryFromIntError| {
+                Errors::InvalidProtocolInit(format!(
+                    "Threshold out of range, got error: {}",
+                    error
+                ))
+            })?;
 
         let execution_id_bytes: Vec<u8> =
             init.common.key_id.clone().into_bytes();
@@ -162,7 +186,12 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     ) -> Result<RoundMessage, Errors> {
         // Serialize CGGMP24 key generation message.
         let inner: Vec<u8> =
-            to_vec(&outgoing.msg).map_err(|_| Errors::InvalidMessage)?;
+            to_vec(&outgoing.msg).map_err(|error: Error| {
+                Errors::InvalidMessage(format!(
+                    "Failed to serialize CGGMP24 key generation message: {}",
+                    error
+                ))
+            })?;
 
         // Wrap into wire format.
         let payload: Vec<u8> =
@@ -170,7 +199,7 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
 
         // Determine recipient.
         let to: Option<u32> = match outgoing.recipient {
-            MessageDestination::OneParty(p) => Some(u32::from(p)),
+            MessageDestination::OneParty(party) => Some(u32::from(party)),
             MessageDestination::AllParties => None,
         };
 
@@ -252,7 +281,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     ///   outgoing message is produced, `None` is returned.
     async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Errors::Aborted);
+            return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
         // Check if the worker has produced any outgoing messages to send back
@@ -294,7 +323,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
         message: RoundMessage,
     ) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
-            return Err(Errors::Aborted);
+            return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
         let Cggmp24Wire::ProtocolMessage { payload }: Cggmp24Wire =
@@ -302,13 +331,25 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
 
         // Deserialize CGGMP24 key generation message (not signing message).
         let key_generation_message: CggmpKeyGenerationMessage =
-            from_slice(&payload).map_err(|_| Errors::InvalidMessage)?;
+            from_slice(&payload).map_err(|error: Error| {
+                Errors::InvalidMessage(format!(
+                    "Failed to deserialize CGGMP24 key generation message: {}",
+                    error
+                ))
+            })?;
 
         let sender: u16 = message
             .from
-            .ok_or(Errors::InvalidMessage)?
+            .ok_or(Errors::InvalidMessage(
+                "Missing sender in message.".into(),
+            ))?
             .try_into()
-            .map_err(|_| Errors::InvalidMessage)?;
+            .map_err(|error: TryFromIntError| {
+                Errors::InvalidMessage(format!(
+                    "Failed to convert sender ID to u16: {}",
+                    error
+                ))
+            })?;
 
         self.incoming_transmitter
             .send(Incoming {
@@ -321,7 +362,14 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                 },
                 msg: key_generation_message,
             })
-            .map_err(|_| Errors::Aborted)?;
+            .map_err(
+                |error: SendError<Incoming<CggmpKeyGenerationMessage>>| {
+                    Errors::Aborted(format!(
+                        "Failed to send incoming message: {}",
+                        error
+                    ))
+                },
+            )?;
 
         if let Ok(outgoing) = self.outgoing_receiver.try_recv() {
             return Ok(Some(self.wrap_outgoing(outgoing)?));
@@ -354,7 +402,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     ///   serialized key share, and the public key bytes.
     async fn finalize(&mut self) -> Result<ProtocolOutput, Errors> {
         if self.aborted {
-            return Err(Errors::Aborted);
+            return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
         match self.done_receiver.recv() {
@@ -363,17 +411,34 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                 // Store what we actually have (incomplete share). It’s fine as
                 // long as your signing protocol later knows
                 // how to “complete” it (aux-info step).
-                let json: Vec<u8> = serde_json::to_vec(&incomplete_key_share)
-                    .map_err(|_| Errors::InvalidKeyShare)?;
+                let json: Vec<u8> = to_vec(&incomplete_key_share).map_err(
+                    |error: Error| {
+                        Errors::InvalidKeyShare(format!(
+                            "Failed to serialize incomplete key share: {}",
+                            error
+                        ))
+                    },
+                )?;
 
                 let stored: Cggmp24StoredKey = Cggmp24StoredKey {
-                    identifier: u16::try_from(self.identifier_u32)
-                        .map_err(|_| Errors::InvalidKeyShare)?,
+                    identifier: u16::try_from(self.identifier_u32).map_err(
+                        |error: TryFromIntError| {
+                            Errors::InvalidKeyShare(format!(
+                                "Failed to convert identifier: {}",
+                                error
+                            ))
+                        },
+                    )?,
                     key_share_json: json,
                 };
 
-                let blob: Vec<u8> = rkyv::to_bytes::<RkyvError>(&stored)
-                    .map_err(|_| Errors::InvalidKeyShare)?
+                let blob: Vec<u8> = to_bytes::<RkyvError>(&stored)
+                    .map_err(|error: RkyvError| {
+                        Errors::InvalidKeyShare(format!(
+                            "Failed to serialize stored key: {}",
+                            error
+                        ))
+                    })?
                     .into_vec();
 
                 // Public key bytes: depending on the exact CGGMP24 type
@@ -390,13 +455,20 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
 
                 Ok(ProtocolOutput::KeyGeneration {
                     key_id: self.key_id.clone(),
-                    key_share: Secret::new(blob),
+                    key_share: Some(Secret::new(blob)),
                     public_key,
                     public_key_package: to_vec(&incomplete_key_share)
-                        .map_err(|_| Errors::InvalidKeyShare)?,
+                        .map_err(|error: Error| {
+                            Errors::InvalidKeyShare(format!(
+                                "Failed to serialize public key package: {}",
+                                error
+                            ))
+                        })?,
                 })
             },
-            _ => Err(Errors::InvalidKeyShare),
+            _ => Err(Errors::InvalidKeyShare(
+                "Failed to finalize protocol.".into(),
+            )),
         }
     }
 

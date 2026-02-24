@@ -18,7 +18,7 @@ pub fn map_status(error: Status) -> Errors {
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum Errors {
     /// Configuration error: invalid configuration provided.
-    #[error("Configuration error: {0}")]
+    #[error("Configuration error. {0}")]
     ConfigError(String),
 
     /// Unauthorized access: identity lacks necessary permissions.
@@ -26,19 +26,19 @@ pub enum Errors {
     Unauthorized,
 
     /// Missing authorization: missing "authorization" metadata.
-    #[error("Missing authorization.")]
-    MissingAuthorization,
+    #[error("Missing authorization. {0}")]
+    MissingAuthorization(String),
 
     /// Invalid authorization encoding: failed to parse authorization header.
     #[error("Invalid authorization encoding.")]
     InvalidAuthorizationEncoding,
 
     /// Invalid authorization token: token does not match expected value.
-    #[error("Invalid authorization token.")]
-    InvalidToken,
+    #[error("Invalid authorization token. {0}")]
+    InvalidToken(String),
 
     /// Session not found: no session exists for the given ID.
-    #[error("Invalid session ID: {0}")]
+    #[error("Invalid session ID. {0}")]
     SessionNotFound(String),
 
     /// Session is not in the initialized state.
@@ -58,79 +58,71 @@ pub enum Errors {
     SessionStateNotFinalized,
 
     /// Unsupported algorithm: requested algorithm is not supported.
-    #[error("Unsupported algorithm: {0}")]
+    #[error("Unsupported algorithm. {0}")]
     UnsupportedAlgorithm(String),
 
     /// Invalid protocol initialization parameters.
-    #[error("Invalid protocol initialization parameters.")]
-    InvalidProtocolInit,
+    #[error("Invalid protocol initialization parameters. {0}")]
+    InvalidProtocolInit(String),
 
     /// Invalid key share: provided key share is malformed.
-    #[error("Invalid key share.")]
-    InvalidKeyShare,
+    #[error("Invalid key share. {0}")]
+    InvalidKeyShare(String),
 
     /// Invalid protocol state: operation not allowed in current protocol
     /// state.
-    #[error("Invalid protocol state: {0}")]
+    #[error("Invalid protocol state. {0}")]
     InvalidState(String),
 
     /// Invalid round number: round number is out of expected range.
-    #[error("Invalid round number: {0}")]
+    #[error("Invalid round number. {0}")]
     InvalidRound(u32),
 
     /// Invalid message: message is malformed or unexpected.
-    #[error("Invalid message.")]
-    InvalidMessage,
+    #[error("Invalid message. {0}")]
+    InvalidMessage(String),
 
     /// Invalid signature: produced signature is malformed.
-    #[error("Invalid signature.")]
-    InvalidSignature,
+    #[error("Invalid signature. {0}")]
+    InvalidSignature(String),
 
     /// Invalid participant: participant identifier is not recognized.
-    #[error("Invalid participant.")]
-    InvalidParticipant,
+    #[error("Invalid participant. {0}")]
+    InvalidParticipant(String),
 
     /// Invalid argument: the provided argument is invalid.
-    #[error("Invalid argument: {0}")]
+    #[error("Invalid argument. {0}")]
     InvalidArgument(String),
 
     /// Failed to sign: protocol failed to produce a valid signature.
-    #[error("Failed to sign.")]
-    FailedToSign,
+    #[error("Failed to sign. {0}")]
+    FailedToSign(String),
 
     /// Invalid threshold: threshold value is invalid.
-    #[error("Invalid threshold.")]
-    InvalidThreshold,
-
-    /// Vault token missing: no token provided for vault access.
-    #[error("Vault token missing.")]
-    VaultTokenMissing,
+    #[error("Invalid threshold, expected {0} got {1}.")]
+    InvalidThreshold(u32, u32),
 
     /// Vault configuration error: invalid vault configuration.
-    #[error("Vault configuration error.")]
-    VaultConfigError,
+    #[error("Vault configuration error. {0}")]
+    VaultConfigError(String),
 
     /// Vault error: error occurred while interacting with the vault.
-    #[error("Vault error.")]
-    VaultError,
-
-    /// Key not found: the requested key does not exist in the vault.
-    #[error("Key not found in vault.")]
-    KeyNotFound,
+    #[error("Vault error. {0}")]
+    VaultError(String),
 
     /// Protocol aborted: the protocol has been aborted.
-    #[error("Protocol aborted.")]
-    Aborted,
+    #[error("Protocol aborted. {0}")]
+    Aborted(String),
 
     /// Internal error: an unexpected internal error occurred.
-    #[error("Internal error: {0}")]
+    #[error("Internal error. {0}")]
     Internal(String),
 
     /// Generic error: a generic error with a message.
-    #[error("Error: {0}")]
+    #[error("Error. {0}")]
     Generic(String),
 
     /// Failed to acquire live lock.
-    #[error("Failed to acquire live lock.")]
-    LiveLockAcquireError,
+    #[error("Failed to acquire live lock. {0}")]
+    LiveLockAcquireError(String),
 }

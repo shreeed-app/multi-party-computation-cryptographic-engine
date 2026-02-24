@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 
+use strum::ParseError;
 use tonic::{Request, Response, Status};
 use tracing::{field::Empty, instrument};
 
@@ -99,10 +100,11 @@ impl<
         let algorithm: Algorithm =
             match Algorithm::from_str(&request.algorithm) {
                 Ok(algorithm) => algorithm,
-                Err(_) => {
-                    return Err(Errors::UnsupportedAlgorithm(
-                        request.algorithm.clone(),
-                    )
+                Err(error) => {
+                    return Err(Errors::UnsupportedAlgorithm(format!(
+                        "Failed to parse algorithm: {}",
+                        error
+                    ))
                     .into());
                 },
             };
@@ -152,8 +154,11 @@ impl<
         let request: &StartKeyGenerationSessionRequest = request.get_ref();
 
         let algorithm: Algorithm = Algorithm::from_str(&request.algorithm)
-            .map_err(|_| {
-                Errors::UnsupportedAlgorithm(request.algorithm.clone())
+            .map_err(|error: ParseError| {
+                Errors::UnsupportedAlgorithm(format!(
+                    "Failed to parse algorithm: {}",
+                    error
+                ))
             })?;
 
         let init: ProtocolInit = ProtocolInit::KeyGeneration(
@@ -276,6 +281,11 @@ impl<
                 public_key,
                 public_key_package,
             } => {
+                // Ensure key share is present in the output.
+                let key_share: KeyShare = key_share.ok_or_else(|| {
+                    Errors::InvalidState("Missing key share in output".into())
+                })?;
+
                 // Store key share in vault in a blocking task.
                 self.vault.store_key_share(&key_id, key_share).await?;
 

@@ -27,7 +27,7 @@ impl RuntimeConfig for NodeRuntimeConfig {
     /// * `path` (`&str`) - Path to the configuration file.
     ///
     /// # Errors
-    /// * `Error` - If file reading or parsing fails.
+    /// * `Errors` - If file reading or parsing fails.
     ///
     /// # Returns
     /// * `Self` - Loaded configuration instance.

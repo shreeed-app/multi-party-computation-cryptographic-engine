@@ -41,7 +41,7 @@ pub enum KeyGenerationInit {
 #[derive(Debug)]
 pub struct DefaultSigningInit {
     /// Unique key identifier.
-    pub key_id: String,
+    pub key_identifier: String,
     /// Algorithm name.
     pub algorithm: Algorithm,
     /// Number of participants.
@@ -77,7 +77,7 @@ pub struct ControllerSigningInit {
 #[derive(Debug)]
 pub struct DefaultKeyGenerationInit {
     /// Unique key identifier.
-    pub key_id: String,
+    pub key_identifier: String,
     /// Algorithm name.
     pub algorithm: Algorithm,
     /// Number of participants.
@@ -105,19 +105,6 @@ pub struct ControllerKeyGenerationInit {
     pub nodes: Vec<NodeIpcClient>,
 }
 
-/// Message exchanged between participants during protocol execution.
-#[derive(Debug, Clone)]
-pub struct RoundMessage {
-    /// Current round number.
-    pub round: Round,
-    /// Sender participant identifier.
-    pub from: Option<u32>,
-    /// Recipient participant identifier (None = broadcast).
-    pub to: Option<u32>,
-    /// Opaque payload bytes.
-    pub payload: Vec<u8>,
-}
-
 /// Final output (protocol-dependent).
 #[derive(Debug)]
 pub enum Signature {
@@ -139,7 +126,7 @@ pub enum ProtocolOutput {
     /// Result of a key generation protocol.
     KeyGeneration {
         /// Unique key identifier.
-        key_id: String,
+        key_identifier: String,
         /// Blob to be stored locally (protocol-specific).
         key_share: Option<KeyShare>,
         /// Public key bytes (curve-specific, canonical format).

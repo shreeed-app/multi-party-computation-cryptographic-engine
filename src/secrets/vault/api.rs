@@ -13,7 +13,7 @@ pub trait VaultProvider: Send + Sync + 'static {
     /// * `key_id` (`&str`) - Identifier of the key share.
     ///
     /// # Errors
-    /// * `Error` - If retrieval fails.
+    /// * `Errors` - If retrieval fails.
     ///
     /// # Returns
     /// * `KeyShare` - Opaque key share bytes.
@@ -26,7 +26,7 @@ pub trait VaultProvider: Send + Sync + 'static {
     /// * `key_share` (`&KeyShare`) - Opaque key share bytes.
     ///
     /// # Errors
-    /// * `Error` - If storage fails.
+    /// * `Errors` - If storage fails.
     ///
     /// # Returns
     /// * `()` - Empty result on success.

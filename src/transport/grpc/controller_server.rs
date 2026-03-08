@@ -7,13 +7,14 @@ use tonic::{Request, Response, Status};
 use tracing::instrument;
 
 use crate::{
-    auth::session::identifier::SessionId,
+    auth::session::identifier::SessionIdentifier,
     proto::signer::v1::{
         AbortRequest,
         AbortResponse,
         GenerateKeyRequest,
         GenerateKeyResponse,
         KeyGenerationResult,
+        RoundMessage,
         SignRequest,
         SignResponse,
         SignatureResult,
@@ -29,7 +30,6 @@ use crate::{
             KeyGenerationInit,
             ProtocolInit,
             ProtocolOutput,
-            RoundMessage,
             SigningInit,
         },
     },
@@ -38,15 +38,23 @@ use crate::{
 };
 
 /// Controller IPC server.
-///
-/// This exposes the controller engine over gRPC.
 pub struct ControllerIpcServer<E: EngineApi> {
+    /// Engine API implementation for protocol execution.
     engine: E,
+    /// gRPC clients for communicating with nodes.
     nodes: Vec<NodeIpcClient>,
 }
 
 impl<E: EngineApi> ControllerIpcServer<E> {
     /// Create a new Controller IPC server.
+    ///
+    /// # Arguments
+    /// * `engine` (`E`) - Engine API implementation for protocol execution.
+    /// * `nodes` (`Vec<NodeIpcClient>`) - gRPC clients for communicating with
+    ///   nodes.
+    ///
+    /// # Returns
+    /// * `Self` - A new instance of the Controller IPC server.
     pub fn new(engine: E, nodes: Vec<NodeIpcClient>) -> Self {
         Self { engine, nodes }
     }
@@ -68,7 +76,7 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
     /// * `GenerateKeyResponse` - The response containing the generated public
     ///   key.
     #[instrument(skip(self, request), fields(
-        key_id = %request.get_ref().key_id,
+        key_identifier = %request.get_ref().key_identifier,
         algorithm = %request.get_ref().algorithm,
     ))]
     async fn generate_key(
@@ -92,7 +100,7 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
         let init: ProtocolInit = ProtocolInit::KeyGeneration(
             KeyGenerationInit::Controller(ControllerKeyGenerationInit {
                 common: DefaultKeyGenerationInit {
-                    key_id: request.key_id.clone(),
+                    key_identifier: request.key_identifier.clone(),
                     algorithm,
                     threshold: request.threshold,
                     participants: request.participants,
@@ -102,13 +110,10 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
         );
 
         // Start controller session.
-        let (session_id, _): (SessionId, RoundMessage) =
+        let (session_id, _): (SessionIdentifier, Vec<RoundMessage>) =
             self.engine.start_session(init).await?;
 
-        // Immediately finalize (controller runs fully inside start_session).
-        let output: ProtocolOutput = self.engine.finalize(session_id).await?;
-
-        match output {
+        match self.engine.finalize(session_id).await? {
             ProtocolOutput::KeyGeneration {
                 public_key,
                 public_key_package,
@@ -139,7 +144,7 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
     /// # Returns
     /// * `SignResponse` - The response containing the final signature.
     #[instrument(skip(self, request), fields(
-        key_id = %request.get_ref().key_id,
+        key_identifier = %request.get_ref().key_identifier,
         algorithm = %request.get_ref().algorithm,
     ))]
     async fn sign(
@@ -151,7 +156,7 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
         let init: ProtocolInit = ProtocolInit::Signing(
             SigningInit::Controller(ControllerSigningInit {
                 common: DefaultSigningInit {
-                    key_id: request.key_id.clone(),
+                    key_identifier: request.key_identifier.clone(),
                     algorithm: Algorithm::from_str(&request.algorithm)
                         .map_err(|error: ParseError| {
                             Errors::UnsupportedAlgorithm(format!(
@@ -168,12 +173,10 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
             }),
         );
 
-        let (session_id, _): (SessionId, RoundMessage) =
+        let (session_id, _): (SessionIdentifier, Vec<RoundMessage>) =
             self.engine.start_session(init).await?;
 
-        let output: ProtocolOutput = self.engine.finalize(session_id).await?;
-
-        match output {
+        match self.engine.finalize(session_id).await? {
             ProtocolOutput::Signature(signature) => {
                 Ok(Response::new(SignResponse {
                     result: Some(SignatureResult {
@@ -191,12 +194,12 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
     /// Abort controller session.
     ///
     /// # Arguments
-    /// * `request` (`AbortRequest`) - The request containing the session ID to
-    ///   abort.
+    /// * `request` (`AbortRequest`) - The request containing the session
+    ///   identifier to abort.
     ///
     /// # Errors
-    /// * `Status` - If the session ID is invalid or if aborting the session
-    ///   fails.
+    /// * `Status` - If the session identifier is invalid or if aborting the
+    ///   session fails.
     #[instrument(skip(self, request))]
     async fn abort(
         &self,
@@ -204,12 +207,12 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
     ) -> Result<Response<AbortResponse>, Status> {
         let request: AbortRequest = request.into_inner();
 
-        let session_id: SessionId = SessionId::parse(&request.session_id)
-            .ok_or_else(|| {
-                Errors::SessionNotFound(request.session_id.clone())
-            })?;
+        let session_identifier: SessionIdentifier =
+            SessionIdentifier::parse(&request.session_identifier).ok_or_else(
+                || Errors::SessionNotFound(request.session_identifier.clone()),
+            )?;
 
-        self.engine.abort(session_id).await?;
+        self.engine.abort(session_identifier).await?;
 
         Ok(Response::new(AbortResponse {}))
     }

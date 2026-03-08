@@ -4,9 +4,6 @@
 # Address where the controller IPC server listens.
 address = "127.0.0.1:6000"
 
-# Logical identifier of the controller service.
-service_id = "controller"
-
 [ipc.auth]
 # Shared token expected by nodes for authentication.
 token = "0"

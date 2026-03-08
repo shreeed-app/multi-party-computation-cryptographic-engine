@@ -1,8 +1,8 @@
-//! FROST(ed25519) curve implementation for controller-side signing.
+//! FROST(schnorr-secp256k1) curve implementation for controller-side signing.
 
 use std::collections::BTreeMap;
 
-use frost_ed25519::{
+use frost_secp256k1::{
     Error,
     Identifier,
     Signature,
@@ -14,17 +14,21 @@ use frost_ed25519::{
 };
 use postcard::{Error as PostcardError, from_bytes, to_allocvec};
 
+use crate::{
+    protocols::algorithm::Algorithm,
+    transport::errors::Errors,
+};
+
 use super::protocol::{FrostControllerSigning, FrostControllerSigningCurve};
-use crate::{protocols::algorithm::Algorithm, transport::errors::Errors};
 
-/// Concrete type alias for FROST(ed25519) controller signing.
-pub type FrostEd25519ControllerSigning =
-    FrostControllerSigning<FrostEd25519ControllerSigningCurve>;
+/// Concrete type alias for FROST(schnorr-secp256k1) controller signing.
+pub type FrostSchnorrSecp256k1ControllerSigning =
+    FrostControllerSigning<FrostSchnorrSecp256k1ControllerSigningCurve>;
 
-/// FROST(ed25519) curve descriptor for controller-side signing.
-pub struct FrostEd25519ControllerSigningCurve;
+/// FROST(schnorr-secp256k1) curve descriptor for controller-side signing.
+pub struct FrostSchnorrSecp256k1ControllerSigningCurve;
 
-impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
+impl FrostControllerSigningCurve for FrostSchnorrSecp256k1ControllerSigningCurve {
     type Identifier = Identifier;
     type SigningCommitments = SigningCommitments;
     type SigningPackage = SigningPackage;
@@ -33,13 +37,13 @@ impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
     type Signature = Signature;
 
     fn algorithm() -> Algorithm {
-        Algorithm::FrostEd25519
+        Algorithm::FrostSchnorrSecp256k1
     }
 
     fn identifier_from_u16(id: u16) -> Result<Self::Identifier, Errors> {
         Identifier::try_from(id).map_err(|error: Error| {
             Errors::InvalidParticipant(format!(
-                "Failed to create ed25519 identifier from {}: {}",
+                "Failed to create secp256k1 identifier from {}: {}",
                 id, error
             ))
         })
@@ -50,7 +54,7 @@ impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
     ) -> Result<Self::PublicKeyPackage, Errors> {
         from_bytes(bytes).map_err(|error: PostcardError| {
             Errors::InvalidMessage(format!(
-                "Failed to deserialize ed25519 public key package: {}",
+                "Failed to deserialize secp256k1 public key package: {}",
                 error
             ))
         })
@@ -61,7 +65,7 @@ impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
     ) -> Result<Self::SigningCommitments, Errors> {
         from_bytes(bytes).map_err(|error: PostcardError| {
             Errors::InvalidMessage(format!(
-                "Failed to deserialize ed25519 signing commitments: {}",
+                "Failed to deserialize secp256k1 signing commitments: {}",
                 error
             ))
         })
@@ -77,14 +81,14 @@ impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
     fn serialize_signing_package(
         package: &Self::SigningPackage,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package).map(|v| v.to_vec()).map_err(
-            |error: PostcardError| {
+        to_allocvec(package)
+            .map(|v| v.to_vec())
+            .map_err(|error: PostcardError| {
                 Errors::InvalidMessage(format!(
-                    "Failed to serialize ed25519 signing package: {}",
+                    "Failed to serialize secp256k1 signing package: {}",
                     error
                 ))
-            },
-        )
+            })
     }
 
     fn deserialize_signature_share(
@@ -92,7 +96,7 @@ impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
     ) -> Result<Self::SignatureShare, Errors> {
         from_bytes(bytes).map_err(|error: PostcardError| {
             Errors::InvalidMessage(format!(
-                "Failed to deserialize ed25519 signature share: {}",
+                "Failed to deserialize secp256k1 signature share: {}",
                 error
             ))
         })
@@ -106,7 +110,7 @@ impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
         aggregate(signing_package, shares, public_key_package).map_err(
             |error: Error| {
                 Errors::InvalidSignature(format!(
-                    "Failed to aggregate ed25519 signature shares: {}",
+                    "Failed to aggregate secp256k1 signature shares: {}",
                     error
                 ))
             },
@@ -116,13 +120,14 @@ impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
     fn serialize_signature(
         signature: &Self::Signature,
     ) -> Result<Vec<u8>, Errors> {
-        signature.serialize().map(|bytes| bytes.to_vec()).map_err(
-            |error: Error| {
+        signature
+            .serialize()
+            .map(|bytes| bytes.to_vec())
+            .map_err(|error: Error| {
                 Errors::InvalidSignature(format!(
-                    "Failed to serialize ed25519 signature: {}",
+                    "Failed to serialize secp256k1 signature: {}",
                     error
                 ))
-            },
-        )
+            })
     }
 }

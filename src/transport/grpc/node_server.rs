@@ -7,13 +7,16 @@ use tonic::{Request, Response, Status};
 use tracing::{field::Empty, instrument};
 
 use crate::{
-    auth::session::identifier::SessionId,
+    auth::session::identifier::SessionIdentifier,
     proto::signer::v1::{
         AbortSessionRequest,
         AbortSessionResponse,
+        CollectRoundRequest,
+        CollectRoundResponse,
         FinalizeSessionRequest,
         FinalizeSessionResponse,
         KeyGenerationResult,
+        RoundMessage,
         SignatureResult,
         StartKeyGenerationSessionRequest,
         StartSessionResponse,
@@ -33,7 +36,6 @@ use crate::{
             NodeSigningInit,
             ProtocolInit,
             ProtocolOutput,
-            RoundMessage,
             SigningInit,
         },
     },
@@ -83,19 +85,19 @@ impl<
     /// * `Result<Response<StartSessionResponse>, Status>` - gRPC response or
     ///   error.
     #[instrument(skip(self, request), fields(
-        key_id = %request.get_ref().key_id,
+        key_identifier = %request.get_ref().key_identifier,
         session = Empty
     ))]
     async fn start_signing_session(
         &self,
         request: Request<StartSigningSessionRequest>,
     ) -> Result<Response<StartSessionResponse>, Status> {
+        tracing::debug!(
+            "Starting signing session for key {}.",
+            request.get_ref().key_identifier
+        );
+
         let request: &StartSigningSessionRequest = request.get_ref();
-
-        // Retrieve key share from vault in a blocking task.
-        let key_id: String = request.key_id.clone();
-
-        let key_share: KeyShare = self.vault.get_key_share(&key_id).await?;
 
         let algorithm: Algorithm =
             match Algorithm::from_str(&request.algorithm) {
@@ -112,22 +114,26 @@ impl<
         let init: ProtocolInit =
             ProtocolInit::Signing(SigningInit::Node(NodeSigningInit {
                 common: DefaultSigningInit {
-                    key_id: request.key_id.clone(),
+                    key_identifier: request.key_identifier.clone(),
                     algorithm,
                     threshold: request.threshold,
                     participants: request.participants,
                     message: request.message.clone(),
                 },
-                key_share,
+                key_share: self
+                    .vault
+                    .get_key_share(&request.key_identifier.clone())
+                    .await?,
             }));
 
-        let (session_id, round_message): (SessionId, RoundMessage) =
-            self.engine.start_session(init).await?;
+        let (session_identifier, round_message): (
+            SessionIdentifier,
+            Vec<RoundMessage>,
+        ) = self.engine.start_session(init).await?;
 
         Ok(Response::new(StartSessionResponse {
-            session_id: session_id.to_string(),
-            round: round_message.round,
-            payload: round_message.payload,
+            session_identifier: session_identifier.to_string(),
+            messages: round_message,
         }))
     }
 
@@ -144,13 +150,18 @@ impl<
     /// * `Result<Response<StartSessionResponse>, Status>` - gRPC response or
     ///   error.
     #[instrument(skip(self, request), fields(
-        key_id = %request.get_ref().key_id,
+        key_identifier = %request.get_ref().key_identifier,
         session = Empty
     ))]
     async fn start_key_generation_session(
         &self,
         request: Request<StartKeyGenerationSessionRequest>,
     ) -> Result<Response<StartSessionResponse>, Status> {
+        tracing::debug!(
+            "Starting key generation session for key {}.",
+            request.get_ref().key_identifier
+        );
+
         let request: &StartKeyGenerationSessionRequest = request.get_ref();
 
         let algorithm: Algorithm = Algorithm::from_str(&request.algorithm)
@@ -164,7 +175,7 @@ impl<
         let init: ProtocolInit = ProtocolInit::KeyGeneration(
             KeyGenerationInit::Node(NodeKeyGenerationInit {
                 common: DefaultKeyGenerationInit {
-                    key_id: request.key_id.clone(),
+                    key_identifier: request.key_identifier.clone(),
                     algorithm,
                     threshold: request.threshold,
                     participants: request.participants,
@@ -173,13 +184,14 @@ impl<
             }),
         );
 
-        let (session_id, round_message): (SessionId, RoundMessage) =
-            self.engine.start_session(init).await?;
+        let (session_identifier, round_message): (
+            SessionIdentifier,
+            Vec<RoundMessage>,
+        ) = self.engine.start_session(init).await?;
 
         Ok(Response::new(StartSessionResponse {
-            session_id: session_id.to_string(),
-            round: round_message.round,
-            payload: round_message.payload,
+            session_identifier: session_identifier.to_string(),
+            messages: round_message,
         }))
     }
 
@@ -200,18 +212,20 @@ impl<
         &self,
         request: Request<SubmitRoundRequest>,
     ) -> Result<Response<SubmitRoundResponse>, Status> {
+        tracing::debug!("Submitting round message for session.");
+
         let request: &SubmitRoundRequest = request.get_ref();
 
-        let session_id: SessionId = match SessionId::parse(&request.session_id)
-        {
-            Some(id) => id,
-            None => {
-                return Err(Errors::SessionNotFound(
-                    request.session_id.clone(),
-                )
-                .into());
-            },
-        };
+        let session_identifier: SessionIdentifier =
+            match SessionIdentifier::parse(&request.session_identifier) {
+                Some(id) => id,
+                None => {
+                    return Err(Errors::SessionNotFound(
+                        request.session_identifier.clone(),
+                    )
+                    .into());
+                },
+            };
 
         let message: RoundMessage = RoundMessage {
             round: request.round,
@@ -219,15 +233,52 @@ impl<
             to: request.to,
             payload: request.payload.clone(),
         };
-        let round_message: RoundMessage =
-            self.engine.submit_round(session_id, message).await?;
 
-        Ok(Response::new(SubmitRoundResponse {
-            round: round_message.round,
-            from: round_message.from,
-            to: round_message.to,
-            payload: round_message.payload,
-        }))
+        let round_messages: Vec<RoundMessage> =
+            self.engine.submit_round(session_identifier, message).await?;
+
+        Ok(Response::new(SubmitRoundResponse { messages: round_messages }))
+    }
+
+    /// Collect round messages for the current round of a session.
+    ///
+    /// # Arguments
+    /// * `request` (`Request<CollectRoundRequest>`) - Incoming gRPC request.
+    ///
+    /// # Errors
+    /// * `Status` - If authentication fails, session does not exist, or
+    ///   protocol fails.
+    ///
+    /// # Returns
+    /// * `Result<Response<CollectRoundResponse>, Status>` - gRPC response or
+    ///   error.
+    #[instrument(skip(self, request))]
+    async fn collect_round(
+        &self,
+        request: Request<CollectRoundRequest>,
+    ) -> Result<Response<CollectRoundResponse>, Status> {
+        tracing::debug!(
+            "Collecting round messages for session {}.",
+            request.get_ref().session_identifier
+        );
+
+        let request: &CollectRoundRequest = request.get_ref();
+
+        let session_identifier: SessionIdentifier =
+            match SessionIdentifier::parse(&request.session_identifier) {
+                Some(identifier) => identifier,
+                None => {
+                    return Err(Errors::SessionNotFound(
+                        request.session_identifier.clone(),
+                    )
+                    .into());
+                },
+            };
+
+        let (messages, done): (Vec<RoundMessage>, bool) =
+            self.engine.collect_round(session_identifier).await?;
+
+        Ok(Response::new(CollectRoundResponse { messages, done }))
     }
 
     /// Finalize a signing session and return the final signature.
@@ -248,20 +299,26 @@ impl<
         &self,
         request: Request<FinalizeSessionRequest>,
     ) -> Result<Response<FinalizeSessionResponse>, Status> {
+        tracing::debug!(
+            "Finalizing session {}.",
+            request.get_ref().session_identifier
+        );
+
         let request: &FinalizeSessionRequest = request.get_ref();
 
-        let session_id: SessionId = match SessionId::parse(&request.session_id)
-        {
-            Some(id) => id,
-            None => {
-                return Err(Errors::SessionNotFound(
-                    request.session_id.clone(),
-                )
-                .into());
-            },
-        };
+        let session_identifier: SessionIdentifier =
+            match SessionIdentifier::parse(&request.session_identifier) {
+                Some(id) => id,
+                None => {
+                    return Err(Errors::SessionNotFound(
+                        request.session_identifier.clone(),
+                    )
+                    .into());
+                },
+            };
 
-        let output: ProtocolOutput = self.engine.finalize(session_id).await?;
+        let output: ProtocolOutput =
+            self.engine.finalize(session_identifier).await?;
 
         match output {
             // Signing output: return final signature to caller.
@@ -276,7 +333,7 @@ impl<
             // Key generation output: store key share in vault, and return
             // the public key to the caller.
             ProtocolOutput::KeyGeneration {
-                key_id,
+                key_identifier,
                 key_share,
                 public_key,
                 public_key_package,
@@ -287,7 +344,7 @@ impl<
                 })?;
 
                 // Store key share in vault in a blocking task.
-                self.vault.store_key_share(&key_id, key_share).await?;
+                self.vault.store_key_share(&key_identifier, key_share).await?;
 
                 Ok(Response::new(FinalizeSessionResponse {
                     final_output: Some(FinalOutput::KeyGeneration(
@@ -298,7 +355,7 @@ impl<
         }
     }
 
-    /// Abort an MPC signing session.
+    /// Abort a signing session.
     ///
     /// # Arguments
     /// * `request` (`Request<AbortSessionRequest>`) - Incoming gRPC request.
@@ -314,20 +371,25 @@ impl<
         &self,
         request: Request<AbortSessionRequest>,
     ) -> Result<Response<AbortSessionResponse>, Status> {
+        tracing::debug!(
+            "Aborting session {}.",
+            request.get_ref().session_identifier
+        );
+
         let request: &AbortSessionRequest = request.get_ref();
 
-        let session_id: SessionId = match SessionId::parse(&request.session_id)
-        {
-            Some(id) => id,
-            None => {
-                return Err(Errors::SessionNotFound(
-                    request.session_id.clone(),
-                )
-                .into());
-            },
-        };
+        let session_identifier: SessionIdentifier =
+            match SessionIdentifier::parse(&request.session_identifier) {
+                Some(identifier) => identifier,
+                None => {
+                    return Err(Errors::SessionNotFound(
+                        request.session_identifier.clone(),
+                    )
+                    .into());
+                },
+            };
 
-        self.engine.abort(session_id).await?;
+        self.engine.abort(session_identifier).await?;
 
         Ok(Response::new(AbortSessionResponse {}))
     }

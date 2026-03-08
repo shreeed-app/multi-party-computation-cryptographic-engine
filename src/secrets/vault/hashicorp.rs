@@ -37,7 +37,7 @@ impl HashicorpVaultProvider {
     /// * `config` (`VaultConfig`) - Vault configuration.
     ///
     /// # Errors
-    /// * `Error` - If initialization fails.
+    /// * `Errors` - If initialization fails.
     ///
     /// # Returns
     /// * `Self` - New HashiCorp Vault provider instance.
@@ -154,7 +154,7 @@ impl VaultProvider for HashicorpVaultProvider {
     /// * `key_share` (`&KeyShare`) - Opaque key share bytes.
     ///
     /// # Errors
-    /// * `Error` - If storage fails.
+    /// * `Errors` - If storage fails.
     ///
     /// # Returns
     /// * `()` - Empty result on success.

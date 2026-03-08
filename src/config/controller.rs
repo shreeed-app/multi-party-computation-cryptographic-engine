@@ -27,7 +27,7 @@ pub struct ControllerRuntimeConfig {
 pub struct NodeConfig {
     /// Endpoint of the node's IPC server.
     pub endpoint: String,
-    /// Participant ID associated with the node.
+    /// Participant identifier associated with the node.
     pub participant_id: u32,
     /// Authentication configuration for connecting to the node.
     pub auth: AuthConfig,
@@ -40,7 +40,7 @@ impl RuntimeConfig for ControllerRuntimeConfig {
     /// * `path` (`&str`) - Path to the configuration file.
     ///
     /// # Errors
-    /// * `Error` - If file reading or parsing fails.
+    /// * `Errors` - If file reading or parsing fails.
     ///
     /// # Returns
     /// * `Self` - Loaded configuration instance.

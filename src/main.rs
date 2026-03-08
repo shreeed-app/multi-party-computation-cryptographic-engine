@@ -14,6 +14,7 @@ use mpc_signer_engine::{
     },
     transport::errors::Errors,
 };
+use tokio::sync::oneshot::{Sender, channel};
 
 /// CLI entrypoint.
 #[derive(Parser)]
@@ -51,19 +52,20 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<(), Errors> {
     let cli: Cli = Cli::parse();
+    let (ready_tx, _): (Sender<()>, _) = channel();
 
     match cli.command {
         // Run as node.
         Command::Node { config } => {
             let runtime_config: NodeRuntimeConfig =
                 NodeRuntimeConfig::load_from_file(&config)?;
-            NodeRuntime::run(runtime_config).await
+            NodeRuntime::run(runtime_config, ready_tx).await
         },
         // Run as controller.
         Command::Controller { config } => {
             let runtime_config: ControllerRuntimeConfig =
                 ControllerRuntimeConfig::load_from_file(&config)?;
-            ControllerRuntime::run(runtime_config).await
+            ControllerRuntime::run(runtime_config, ready_tx).await
         },
     }
 }

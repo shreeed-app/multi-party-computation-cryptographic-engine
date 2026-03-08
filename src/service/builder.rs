@@ -15,8 +15,8 @@ impl EngineBuilder {
     ///
     /// # Returns
     /// * `Self` - New engine builder instance.
-    pub fn new() -> Self {
-        Self { session_ttl: Duration::from_secs(300) }
+    pub fn new(session_ttl: Duration) -> Self {
+        Self { session_ttl }
     }
 
     /// Override the session TTL.
@@ -38,7 +38,11 @@ impl EngineBuilder {
 }
 
 impl Default for EngineBuilder {
+    /// Create a new builder with default settings.
+    ///
+    /// # Returns
+    /// * `Self` - New engine builder instance.
     fn default() -> Self {
-        Self::new()
+        Self::new(Duration::from_secs(300)) // 5 minutes.
     }
 }

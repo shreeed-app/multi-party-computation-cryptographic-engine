@@ -1,74 +1,92 @@
-//! Signer engine API definitions.
+//! Service engine definitions.
 
 use async_trait::async_trait;
 
 use crate::{
-    auth::session::identifier::SessionId,
-    protocols::types::{ProtocolInit, ProtocolOutput, RoundMessage},
+    auth::session::identifier::SessionIdentifier,
+    proto::signer::v1::RoundMessage,
+    protocols::types::{ProtocolInit, ProtocolOutput},
     transport::errors::Errors,
 };
 
-/// Public engine interface exposed to the IPC layer.
+/// Engine API trait. Implemented by both controller and node engines.
 #[async_trait]
 pub trait EngineApi: Send + Sync + 'static {
-    /// Start a new signing session.
+    /// Start a distributed session.
     ///
     /// # Arguments
-    /// * `init` (`ProtocolInit`) - Fully validated protocol initialization
-    ///   context.
+    /// * `init` (`ProtocolInit`) - Protocol initialization context.
     ///
     /// # Errors
-    /// * `Error` - If session creation or protocol initialization fails.
+    /// * `Errors` - If any error occurs during session start.
     ///
     /// # Returns
-    /// * `(SessionId, RoundMessage)` - Session identifier and round 0 message.
+    /// * `(SessionId, Vec<RoundMessage>)` - Session identifier and initial
+    ///   round messages (empty for controller since it executes
+    ///   synchronously).
     async fn start_session(
         &self,
         init: ProtocolInit,
-    ) -> Result<(SessionId, RoundMessage), Errors>;
+    ) -> Result<(SessionIdentifier, Vec<RoundMessage>), Errors>;
 
-    /// Submit a round message for an existing session.
+    /// Submit a round message to the session.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Target session.
-    /// * `message` (`RoundMessage`) - Incoming round message.
+    /// * `session_id` (`SessionId`) - Identifier of the session to which the
+    ///   message belongs.
+    /// * `message` (`RoundMessage`) - Message received from another node.
     ///
     /// # Errors
-    /// * `Error` - If session does not exist, round is invalid, or protocol
-    ///   fails.
+    /// * `Errors` - If any error occurs during message submission.
     ///
     /// # Returns
-    /// * `RoundMessage` - Next outgoing round message.
+    /// * `Vec<RoundMessage>` - Messages to broadcast for the next round after
+    ///   processing the submitted message.
     async fn submit_round(
         &self,
-        session_id: SessionId,
+        session_id: SessionIdentifier,
         message: RoundMessage,
-    ) -> Result<RoundMessage, Errors>;
+    ) -> Result<Vec<RoundMessage>, Errors>;
 
-    /// Finalize a signing session.
-    ///
-    /// # Arguments
-    /// * `session_id` (`SessionId`) - Target session.
+    /// Collect round messages from all participants for the current round.
     ///
     /// # Errors
-    /// * `Error` - If session is not in a final state.
+    /// * `Errors` - If any error occurs during message collection.
     ///
     /// # Returns
-    /// * `ProtocolOutput` - Final signature output.
+    /// * `(Vec<RoundMessage>, bool)` - Collected messages for the current
+    ///   round and a boolean indicating if the round is complete (i.e., all
+    ///   expected messages have been collected).
+    async fn collect_round(
+        &self,
+        session_id: SessionIdentifier,
+    ) -> Result<(Vec<RoundMessage>, bool), Errors>;
+
+    /// Collect round messages from all participants for the current round.
+    ///
+    /// # Arguments
+    /// * `session_id` (`SessionId`) - Identifier of the session for which to
+    ///   collect messages.
+    ///
+    /// # Errors
+    /// * `Errors` - If any error occurs during message collection.
+    ///
+    /// # Returns
+    /// * `ProtocolOutput` - Collected messages for the current round.
     async fn finalize(
         &self,
-        session_id: SessionId,
+        session_id: SessionIdentifier,
     ) -> Result<ProtocolOutput, Errors>;
 
-    /// Abort a signing session.
-    ///
+    /// Abort an ongoing session.
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Target session.
+    /// * `session_id` (`SessionId`) - Identifier of the session to abort.
     ///
     /// # Errors
-    /// * `Error` - If session does not exist.
+    /// * `Errors` - If any error occurs during session abortion.
     ///
     /// # Returns
-    /// * `()` - Unit.
-    async fn abort(&self, session_id: SessionId) -> Result<(), Errors>;
+    /// * `()` - On successful abortion.
+    async fn abort(&self, session_id: SessionIdentifier)
+    -> Result<(), Errors>;
 }

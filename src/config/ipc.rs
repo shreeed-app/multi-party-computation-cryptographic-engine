@@ -7,7 +7,7 @@ use serde::Deserialize;
 pub struct NodeIpcConfig {
     /// Logical node identifier (used for scoping).
     pub node_id: String,
-    /// Participant ID for the node (used for authentication).
+    /// Participant identifier for the node (used for authentication).
     pub participant_id: u32,
     /// Authentication configuration.
     pub auth: AuthConfig,
@@ -22,8 +22,6 @@ pub struct NodeIpcConfig {
 pub struct ControllerIpcConfig {
     /// IPC server address (e.g. "[::1]:50051").
     pub address: String,
-    /// Logical service identifier (used for scoping).
-    pub service_id: String,
     /// Authentication configuration.
     pub auth: AuthConfig,
 }

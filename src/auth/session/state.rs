@@ -29,7 +29,7 @@ impl SessionState {
     /// * `round` (`u32`) - Round number to validate.
     ///
     /// # Errors
-    /// * `Error` - Returns `InvalidSessionState` if the round is not valid.
+    /// * `Errors` - Returns `InvalidSessionState` if the round is not valid.
     ///
     /// # Returns
     /// * `()` - Returns unit on success.
@@ -37,23 +37,21 @@ impl SessionState {
         match self {
             // Initial state: only round 0 is valid, starting the session.
             SessionState::Initialized => {
-                if round == 0 {
-                    Ok(())
-                } else {
-                    Err(Errors::SessionStateInitialized(round))
+                if round != 0 {
+                    return Err(Errors::SessionStateInitialized(round));
                 }
+                Ok(())
             },
 
             // In-progress state: only the next round is valid.
             SessionState::InProgress { current_round } => {
-                if round == *current_round + 1 {
-                    Ok(())
-                } else {
-                    Err(Errors::SessionStateInProgress(
+                if round != *current_round + 1 {
+                    return Err(Errors::SessionStateInProgress(
                         current_round + 1,
                         round,
-                    ))
+                    ));
                 }
+                Ok(())
             },
 
             // Terminal states: no further rounds are valid.
@@ -77,14 +75,14 @@ impl SessionState {
     /// Mark the session as finalized.
     ///
     /// # Errors
-    /// * `Error` - Returns `InvalidSessionState` if the session is not in a
+    /// * `Errors` - Returns `InvalidSessionState` if the session is not in a
     ///   state that can be finalized.
     ///
     /// # Returns
     /// * `()` - Returns unit on success.
     pub fn finalize(&mut self) -> Result<(), Errors> {
         match self {
-            SessionState::InProgress { .. } => {
+            SessionState::InProgress { .. } | SessionState::Initialized => {
                 *self = SessionState::Finalized;
                 Ok(())
             },
@@ -98,13 +96,5 @@ impl SessionState {
     /// * `()` - Returns unit on success.
     pub fn abort(&mut self) {
         *self = SessionState::Aborted;
-    }
-
-    /// Check whether the session is terminal.
-    ///
-    /// # Returns
-    /// * `bool` - `true` if the session is in a terminal state.
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, SessionState::Finalized | SessionState::Aborted)
     }
 }

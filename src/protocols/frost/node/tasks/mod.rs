@@ -1,6 +1,10 @@
-//! FROST-based protocols signing tasks.
+//! FROST participant-side signing protocols.
+//!
+//! The signing logic lives in `protocol` as a single generic implementation
+//! over the `FrostSigningCurve` trait. Each curve variant (`ed25519`,
+//! `schnorr_secp256k1`) implements that trait and exposes a concrete type
+//! alias.
 
-// Note: both algorithm files can be combined into a single file using a macro,
-// but for clarity and maintainability, they are kept separate.
 pub mod ed25519;
+pub mod protocol;
 pub mod schnorr_secp256k1;

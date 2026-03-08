@@ -6,35 +6,51 @@ option go_package = "signer_pb";
 option java_package = "com.signer.v1";
 
 /// Node engine IPC service.
+/// Executed by each participant in the protocol.
+/// The controller communicates with each node via this service to drive
+/// protocol rounds and retrieve results.
 service Node {
   /// Start a new signing session and execute round 0.
+  /// Returns the session identifier and the initial round messages.
   rpc StartSigningSession (StartSigningSessionRequest)
   returns (StartSessionResponse);
 
   /// Start a new key generation session and execute round 0.
+  /// Returns the session identifier and the initial round messages.
   rpc StartKeyGenerationSession (StartKeyGenerationSessionRequest)
   returns (StartSessionResponse);
 
-  /// Submit a round message and receive the next round output.
+  /// Deliver a round message to the node and return any messages produced
+  /// synchronously. For asynchronous protocols, use CollectRound to retrieve
+  /// messages produced by the worker after all round messages are delivered.
   rpc SubmitRound (SubmitRoundRequest)
   returns (SubmitRoundResponse);
 
-  /// Finalize the session and return the signature.
+  /// Poll the node for messages produced by the worker since the last
+  /// SubmitRound call. Returns done=true when the worker has finished the
+  /// current round and no more messages will be produced.
+  rpc CollectRound (CollectRoundRequest)
+  returns (CollectRoundResponse);
+
+  /// Finalize the session and return the protocol output (signature or
+  /// generated key). Must be called after all rounds are complete.
   rpc FinalizeSession (FinalizeSessionRequest)
   returns (FinalizeSessionResponse);
 
-  /// Abort a session explicitly.
+  /// Abort a session and release its resources.
   rpc AbortSession (AbortSessionRequest)
   returns (AbortSessionResponse);
 }
 
 /// Controller service for high-level operations.
+/// Entry point for external clients — orchestrates the full protocol across
+/// all nodes and returns the final result.
 service Controller {
-  /// Generate a new key.
+  /// Generate a new threshold key across all nodes.
   rpc GenerateKey (GenerateKeyRequest)
   returns (GenerateKeyResponse);
 
-  /// Sign a message.
+  /// Sign a message using an existing threshold key.
   rpc Sign (SignRequest)
   returns (SignResponse);
 
@@ -43,176 +59,200 @@ service Controller {
   returns (AbortResponse);
 }
 
-/// Request to generate a new key.
+/// Request to generate a new threshold key.
 message GenerateKeyRequest {
-  /// Logical key identifier (stable across sessions).
-  string key_id = 1;
-  /// Algorithm identifier (e.g. "frost-ed25519").
+  /// Stable identifier for the key — used to retrieve the key share later.
+  string key_identifier = 1;
+  /// Algorithm identifier (e.g. "cggmp24-ecdsa-secp256k1", "frost-ed25519").
   string algorithm = 2;
-  /// Threshold (t).
+  /// Minimum number of participants required to sign (t).
   uint32 threshold = 3;
-  /// Number of participants (n).
+  /// Total number of participants holding a key share (n).
   uint32 participants = 4;
 }
 
-/// Response containing the key generation result.
+/// Response containing the generated public key and public key package.
 message GenerateKeyResponse {
-  /// Key generation result.
+  /// Generated public key and public key package for signing aggregation.
   KeyGenerationResult result = 1;
 }
 
-/// Request to sign a message.
+/// Request to sign a message using an existing threshold key.
 message SignRequest {
-  /// Logical key identifier (stable across sessions).
-  string key_id = 1;
-  /// Serialized protocol-specific public key package.
+  /// Stable identifier for the key to sign with.
+  string key_identifier = 1;
+  /// Serialized public key package required for threshold aggregation.
   bytes public_key_package = 2;
-  /// Algorithm identifier (e.g. "frost-ed25519").
+  /// Algorithm identifier (e.g. "cggmp24-ecdsa-secp256k1", "frost-ed25519").
   string algorithm = 3;
-  /// Threshold (t).
+  /// Minimum number of participants required to sign (t).
   uint32 threshold = 4;
-  /// Number of participants (n).
+  /// Total number of participants holding a key share (n).
   uint32 participants = 5;
-  /// Message to sign.
+  /// Raw message bytes to sign.
   bytes message = 6;
 }
 
-/// Response containing the signature result.
+/// Response containing the produced signature.
 message SignResponse {
-  /// Signature result.
+  /// Produced signature for the signing request.
   SignatureResult result = 1;
 }
 
 /// Request to abort an ongoing operation.
 message AbortRequest {
-  /// Unique session identifier.
-  string session_id = 1;
+  /// Target session identifier.
+  string session_identifier = 1;
 }
 
-/// Empty response confirming abort.
+/// Empty response confirming the abort.
 message AbortResponse {}
 
-/// Request to start a new signing session.
+/// Request to start a new signing session on a node.
 message StartSigningSessionRequest {
-  /// Logical key identifier (stable across sessions).
-  string key_id = 1;
-  /// Algorithm identifier (e.g. "frost-ed25519").
+  /// Stable identifier for the key to sign with.
+  string key_identifier = 1;
+  /// Algorithm identifier.
   string algorithm = 2;
-  /// Threshold (t).
+  /// Minimum number of participants required to sign (t).
   uint32 threshold = 3;
-  /// Number of participants (n).
+  /// Total number of participants holding a key share (n).
   uint32 participants = 4;
-  /// Message to sign.
+  /// Raw message bytes to sign.
   bytes message = 5;
 }
 
-/// Request to start a new key generation session.
+/// Request to start a new key generation session on a node.
 message StartKeyGenerationSessionRequest {
-  /// Logical key identifier (stable across sessions).
-  string key_id = 1;
-  /// Algorithm identifier (e.g. "frost-ed25519").
+  /// Stable identifier for the key being generated.
+  string key_identifier = 1;
+  /// Algorithm identifier.
   string algorithm = 2;
-  /// Threshold (t).
+  /// Minimum number of participants required to sign (t).
   uint32 threshold = 3;
-  /// Number of participants (n).
+  /// Total number of participants holding a key share (n).
   uint32 participants = 4;
-  /// Participant identifier.
+  /// Index of this participant in the protocol (0-based for CGGMP24,
+  /// 1-based for FROST).
   uint32 identifier = 5;
 }
 
-/// Response containing the session ID and round 0 output.
+/// Response to a session start request.
 message StartSessionResponse {
-  /// Unique session identifier.
-  string session_id = 1;
-  /// Round number (always 0).
-  uint32 round = 2;
-  /// Opaque round payload.
-  bytes payload = 3;
+  /// Unique identifier for the created session.
+  string session_identifier = 1;
+  /// Round 0 messages to be delivered to other participants.
+  repeated RoundMessage messages = 2;
 }
 
-/// Request to submit a round message.
+/// Request to deliver a round message to a node.
 message SubmitRoundRequest {
-  /// Unique session identifier.
-  string session_id = 1;
-  /// Round number being submitted.
+  /// Target session identifier.
+  string session_identifier = 1;
+  /// Round number of the message being submitted.
   uint32 round = 2;
-  /// Optional sender identifier.
+  /// Sender participant identifier. Absent if sent by the controller.
   optional uint32 from = 3;
-  /// Optional recipient identifier.
+  /// Recipient participant identifier. Absent for broadcast messages.
   optional uint32 to = 4;
-  /// Opaque payload.
+  /// Opaque protocol payload — interpreted by the node protocol implementation.
   bytes payload = 5;
 }
 
-/// Response containing the next round message.
+/// Response to a SubmitRound call.
 message SubmitRoundResponse {
-  /// Next round number.
+  /// Messages produced synchronously by the node in response to the submitted
+  /// message. Empty for asynchronous protocols — use CollectRound instead.
+  repeated RoundMessage messages = 1;
+}
+
+/// Request to collect messages produced by the worker since the last
+/// SubmitRound call.
+message CollectRoundRequest {
+  /// Target session identifier.
+  string session_identifier = 1;
+}
+
+/// Response to a CollectRound call.
+message CollectRoundResponse {
+  /// Messages produced by the worker since the last collection.
+  /// May be empty if the worker has not yet finished processing.
+  repeated RoundMessage messages = 1;
+  /// True when the worker has completed the current round and will not produce
+  /// any further messages. The controller should proceed to FinalizeSession.
+  bool done = 2;
+}
+
+/// A single round message exchanged between participants.
+message RoundMessage {
+  /// Round number this message belongs to.
   uint32 round = 1;
-  /// Optional sender identifier.
+  /// Sender participant identifier. Absent if sent by the controller.
   optional uint32 from = 2;
-  /// Optional recipient identifier.
+  /// Recipient participant identifier. Absent for broadcast messages.
   optional uint32 to = 3;
-  /// Opaque payload.
+  /// Opaque protocol payload — interpreted by the recipient.
   bytes payload = 4;
 }
 
-/// Request to finalize a signing session.
+/// Request to finalize a session and retrieve the protocol output.
 message FinalizeSessionRequest {
-  /// Unique session identifier.
-  string session_id = 1;
+  /// Target session identifier.
+  string session_identifier = 1;
 }
 
 /// Response containing the final protocol output.
 message FinalizeSessionResponse {
-  /// Final protocol output.
+  /// Final output of the session, which can be either a signature or a
+  /// generated key depending on the session type.
   oneof final_output {
-    /// Signature output (signing protocols).
+    /// Produced by signing sessions.
     SignatureResult signature = 1;
-
-    /// Key generation output (key generation protocols).
+    /// Produced by key generation sessions.
     KeyGenerationResult key_generation = 2;
   }
 }
 
-/// Final signature output.
+/// Final output of a signing session.
 message SignatureResult {
-  /// Signature output.
+  /// Signature bytes in a format specific to the signing algorithm:
+  /// - secp256k1 ECDSA — DER-encoded (variable length).
+  /// - secp256k1 Schnorr — 64 bytes (r || s).
+  /// - ed25519 — 64 bytes (r || s).
   oneof final_signature {
     /// Raw signature bytes (e.g. Ed25519, Schnorr).
     bytes raw = 1;
-    /// ECDSA signature.
+    /// ECDSA signature with r, s, and recovery identifier.
     EcdsaSignature ecdsa = 2;
   }
 }
 
-/// Key generation output.
+/// Final output of a key generation session.
 message KeyGenerationResult {
-  /// Public key bytes in a canonical format.
-  ///   - secp256k1: SEC1 encoded public key (recommend compressed 33 bytes).
-  ///   - ed25519: 32-byte public key.
+  /// Public key bytes in canonical format:
+  /// - secp256k1 — SEC1 compressed (33 bytes).
+  /// - ed25519 — 32 bytes.
   bytes public_key = 1;
-  /// Serialized protocol-specific public key package.
-  /// Required for threshold signing aggregation.
-  /// For FROST: serialized frost::keys::PublicKeyPackage (postcard encoded).
-  /// For CGGMP24: protocol-specific aggregation context.
+  /// Serialized public key package required for threshold signing aggregation.
+  /// Format is protocol-specific (postcard for FROST, JSON for CGGMP24).
   bytes public_key_package = 2;
 }
 
 /// ECDSA signature components.
 message EcdsaSignature {
-  /// 'r' component.
+  /// r value of the signature.
   bytes r = 1;
-  /// 's' component.
+  /// s value of the signature.
   bytes s = 2;
-  /// Recovery identifier.
+  /// Recovery identifier — used to recover the public key from the signature.
   uint32 v = 3;
 }
 
-/// Request to abort a signing session.
+/// Request to abort a session on a node.
 message AbortSessionRequest {
-  /// Unique session identifier.
-  string session_id = 1;
+  /// Target session identifier.
+  string session_identifier = 1;
 }
 
-/// Empty response confirming abort.
+/// Empty response confirming the session abort.
 message AbortSessionResponse {}

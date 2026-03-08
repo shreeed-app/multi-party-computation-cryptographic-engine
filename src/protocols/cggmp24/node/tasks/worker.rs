@@ -1,195 +1,75 @@
-//! CGGMP24 protocol worker implementation.
+//! CGGMP24 signing protocol descriptor.
 
-use std::{
-    sync::Arc,
-    thread::{sleep, spawn},
-    time::Duration,
-};
+use std::fmt::Debug;
 
 use cggmp24::{
     ExecutionId,
-    SigningError,
     generic_ec::curves::Secp256k1,
     key_share::KeyShare,
     signing::{DataToSign, Signature, msg::Msg},
 };
-use crossbeam_channel::{Receiver, SendError, Sender};
-use once_cell::sync::Lazy;
+use crossbeam_channel::{Receiver, Sender};
 use rand_core::OsRng;
-use round_based::{
-    Incoming,
-    Outgoing,
-    state_machine::{ProceedResult, StateMachine},
-};
+use round_based::{Incoming, Outgoing, state_machine::StateMachine};
 use sha2::Sha256;
-use tokio::sync::{Semaphore, SemaphorePermit};
 
-/// Maximum number of concurrent CGGMP24 workers.
-/// This bounds the number of OS threads spawned for CGGMP24 signing
-/// and prevents resource exhaustion under load.
-const MAXIMUM_WORKERS: usize = 8;
+use crate::protocols::cggmp24::node::worker::{
+    CggmpProtocol,
+    WorkerDone,
+    drive,
+};
 
-/// Timeout duration for incoming messages.
-const INCOMING_MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Global semaphore used to limit concurrent CGGMP24 workers.
-/// A permit is acquired before spawning a worker thread and
-/// released automatically when the worker exits.
-static CGGMP_WORKER_SEMAPHORE: Lazy<Arc<Semaphore>> =
-    Lazy::new(|| Arc::new(Semaphore::new(MAXIMUM_WORKERS)));
-
-/// Message type used by CGGMP24 ECDSA Secp256k1 protocol worker.
+/// Message type for CGGMP24 signing.
 pub type CggmpSigningMessage = Msg<Secp256k1, Sha256>;
 
-/// Worker completion notification.
-pub enum WorkerDone {
-    /// Protocol completed successfully with resulting signature.
-    Ok(Signature<Secp256k1>),
-    /// Protocol ended with an error.
-    Err,
-}
+/// Completion signal alias for CGGMP24 signing.
+pub type SigningWorkerDone = WorkerDone<CggmpSigningOutput>;
 
-/// CGGMP24 ECDSA Secp256k1 protocol worker.
-pub struct Worker {
-    /// Key share of the participant.
-    pub key_share: KeyShare<Secp256k1>,
-    /// List of participant identifiers.
-    pub parties: Vec<u16>,
-    /// Identifier of the current participant.
+/// Output type for CGGMP24 signing.
+pub type CggmpSigningOutput = Signature<Secp256k1>;
+
+/// CGGMP24 signing protocol descriptor.
+pub struct SigningProtocol {
+    /// Unique identifier for the protocol instance.
     pub identifier: u16,
+    /// List of participant identifiers in the protocol.
+    pub parties: Vec<u16>,
+    /// Key share used for signing.
+    pub key_share: KeyShare<Secp256k1>,
     /// Data to be signed.
     pub data_to_sign: DataToSign<Secp256k1>,
-    /// Execution identifier as bytes.
+    /// Unique identifier for the signing operation.
     pub execution_id_bytes: Vec<u8>,
-    /// Channel to receive incoming messages.
-    pub incoming_receiver: Receiver<Incoming<CggmpSigningMessage>>,
-    /// Channel to send outgoing messages.
-    pub outgoing_transmitter: Sender<Outgoing<CggmpSigningMessage>>,
-    /// Channel to notify when the worker is done.
-    pub done_transmitter: Sender<WorkerDone>,
 }
 
-/// Spawns a worker thread to execute CGGMP24 ECDSA Secp256k1 protocol.
-///
-/// # Arguments
-/// * `worker` (`Worker`) - The worker instance containing protocol parameters
-///   and channels.
-pub fn spawn_worker(worker: Worker) {
-    let semaphore: Arc<Semaphore> = CGGMP_WORKER_SEMAPHORE.clone();
+impl CggmpProtocol for SigningProtocol {
+    type Msg = CggmpSigningMessage;
+    type Output = CggmpSigningOutput;
 
-    // We rely on Tokio here only as a scheduler to provide back pressure.
-    // The actual CGGMP24 execution still happens in a dedicated OS thread.
-    tokio::spawn(async move {
-        // Acquire a permit before spawning the OS thread.
-        // This provides a hard upper bound on concurrent CGGMP24 workers.
-        let _permit: SemaphorePermit<'_> = match semaphore.acquire().await {
-            Ok(permit) => permit,
-            Err(_) => {
-                // Semaphore closed: treat as protocol abort.
-                let _: Result<(), SendError<WorkerDone>> =
-                    worker.done_transmitter.send(WorkerDone::Err);
-                return;
-            },
-        };
+    fn run(
+        self,
+        incoming: &Receiver<Incoming<Self::Msg>>,
+        outgoing: &Sender<Vec<Outgoing<Self::Msg>>>,
+    ) -> Option<Self::Output> {
+        let execution_id: ExecutionId<'_> =
+            ExecutionId::new(&self.execution_id_bytes);
 
-        spawn(move || {
-            run_worker(worker);
-            // Permit is released automatically when `_permit` is dropped
-            // after the thread exits.
-        });
-    });
-}
+        // Initialize a random number generator for the protocol execution.
+        let mut random: OsRng = OsRng;
 
-/// Runs a single CGGMP24 signing session.
-///
-/// # Arguments
-/// * `worker` (`Worker`) - The worker instance containing protocol parameters
-///   and channels.
-fn run_worker(worker: Worker) {
-    let mut random: OsRng = OsRng;
+        // Initialize the CGGMP24 signing state machine with the provided
+        // parameters.
+        let state_machine: impl StateMachine<
+            Msg = Self::Msg,
+            Output = Result<Signature<Secp256k1>, impl Debug>,
+        > = cggmp24::signing(
+            execution_id,
+            self.identifier,
+            &self.parties,
+            &self.key_share,
+        )
+        .sign_sync(&mut random, &self.data_to_sign);
 
-    // Safety: `execution_id_bytes` is owned by this thread and lives
-    // for the entire lifetime of the state machine.
-    let execution_id: ExecutionId<'_> =
-        ExecutionId::new(&worker.execution_id_bytes);
-
-    let mut state_machine: impl StateMachine<
-        Output = Result<Signature<Secp256k1>, SigningError>,
-        Msg = CggmpSigningMessage,
-    > = cggmp24::signing(
-        execution_id,
-        worker.identifier,
-        &worker.parties,
-        &worker.key_share,
-    )
-    .sign_sync(&mut random, &worker.data_to_sign);
-
-    // Backoff delay for yielded executions.
-    let mut backoff: u64 = 1u64; // µs
-
-    // Important: messages delivered via `incoming_receiver` must preserve
-    // the order enforced by the controller. Reordering would
-    // violate CGGMP24 protocol assumptions.
-    loop {
-        match state_machine.proceed() {
-            // Outgoing message to be sent to other participants.
-            ProceedResult::SendMsg(output) => {
-                backoff = 1; // Reset backoff on successful progress.
-
-                // Ignore send errors: if the receiver is gone, the
-                // protocol is already aborted and there is nothing
-                // meaningful to do.
-                let _: Result<(), SendError<Outgoing<CggmpSigningMessage>>> =
-                    worker.outgoing_transmitter.send(output);
-            },
-
-            // Incoming message to be processed.
-            ProceedResult::NeedsOneMoreMessage => {
-                backoff = 1; // Reset backoff on successful progress.
-
-                match worker
-                    .incoming_receiver
-                    .recv_timeout(INCOMING_MESSAGE_TIMEOUT)
-                {
-                    Ok(incoming) => {
-                        if state_machine.received_msg(incoming).is_err() {
-                            let _: Result<(), SendError<WorkerDone>> =
-                                worker.done_transmitter.send(WorkerDone::Err);
-                            break;
-                        }
-                    },
-
-                    // Any error, `RecvTimeoutError::Timeout` or
-                    // `RecvTimeoutError::Disconnected` are treated.
-                    Err(_) => {
-                        // Incoming channel closed: protocol aborted.
-                        let _: Result<(), SendError<WorkerDone>> =
-                            worker.done_transmitter.send(WorkerDone::Err);
-                        break;
-                    },
-                }
-            },
-
-            // Yielded execution, continue.
-            ProceedResult::Yielded => {
-                // Simple exponential backoff to avoid busy-waiting.
-                sleep(Duration::from_micros(backoff));
-                backoff = (backoff * 2).min(100);
-            },
-
-            // Protocol completed with resulting signature.
-            ProceedResult::Output(Ok(signature)) => {
-                let _: Result<(), SendError<WorkerDone>> =
-                    worker.done_transmitter.send(WorkerDone::Ok(signature));
-                break;
-            },
-
-            // Protocol ended with an error.
-            ProceedResult::Output(Err(_)) | ProceedResult::Error(_) => {
-                let _: Result<(), SendError<WorkerDone>> =
-                    worker.done_transmitter.send(WorkerDone::Err);
-                break;
-            },
-        }
+        drive(state_machine, incoming, outgoing)
     }
 }

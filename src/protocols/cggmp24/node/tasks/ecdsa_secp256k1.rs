@@ -1,15 +1,25 @@
 //! CGGMP24 ECDSA Secp256k1 signing protocol implementation.
 
-use std::{array::TryFromSliceError, num::TryFromIntError};
+use std::{
+    array::TryFromSliceError,
+    collections::VecDeque,
+    num::TryFromIntError,
+};
 
 use async_trait::async_trait;
 use cggmp24::{
     DataToSign,
     generic_ec::{NonZero, Point, curves::Secp256k1 as CggmpSecp256k1},
     key_share::KeyShare,
-    signing::msg::Msg,
 };
-use crossbeam_channel::{Receiver, SendError, Sender, bounded, unbounded};
+use crossbeam_channel::{
+    Receiver,
+    RecvError,
+    SendError,
+    Sender,
+    bounded,
+    unbounded,
+};
 use k256::ecdsa::{
     Error as EcdsaError,
     RecoveryId,
@@ -28,15 +38,22 @@ use serde_json::{Error, from_slice, to_vec};
 use sha2::{Digest, Sha256, digest::Output};
 
 use crate::{
-    proto::signer::v1::{EcdsaSignature, signature_result::FinalSignature},
+    proto::signer::v1::{
+        EcdsaSignature,
+        RoundMessage,
+        signature_result::FinalSignature,
+    },
     protocols::{
         algorithm::Algorithm,
         cggmp24::{
-            node::tasks::worker::{
-                CggmpSigningMessage,
-                Worker,
-                WorkerDone,
-                spawn_worker,
+            node::{
+                tasks::worker::{
+                    CggmpSigningMessage,
+                    CggmpSigningOutput,
+                    SigningProtocol,
+                    SigningWorkerDone,
+                },
+                worker::{Worker, WorkerDone, spawn_worker},
             },
             stored_key::{ArchivedCggmp24StoredKey, Cggmp24StoredKey},
             wire::Cggmp24Wire,
@@ -48,7 +65,6 @@ use crate::{
             ProtocolInit,
             ProtocolOutput,
             Round,
-            RoundMessage,
             SigningInit,
         },
     },
@@ -69,17 +85,21 @@ pub struct Cggmp24EcdsaSecp256k1NodeSigning {
     public_key_bytes: Vec<u8>,
     /// Channel to send incoming messages to the worker.
     incoming_transmitter: Sender<Incoming<CggmpSigningMessage>>,
-    /// Channel to receive outgoing messages from the worker.
-    outgoing_receiver: Receiver<round_based::Outgoing<CggmpSigningMessage>>,
+    /// Channel to receive outgoing message batches from the worker.
+    outgoing_receiver: Receiver<Vec<Outgoing<CggmpSigningMessage>>>,
     /// Channel to receive worker completion notifications.
-    done_receiver: Receiver<WorkerDone>,
+    done_receiver: Receiver<SigningWorkerDone>,
+    /// Pending outgoing messages not yet forwarded to the engine.
+    pending_messages: VecDeque<RoundMessage>,
+    /// Worker completion signal captured by drain_pending.
+    worker_done: Option<SigningWorkerDone>,
     /// Message identifier counter used to populate `RoundMessage.round`.
     /// Important: `round_based::MsgId` is not cryptographically meaningful
     /// in CGGMP24. It is only used to ensure a monotonic message identifier
     /// when delivering messages to the state machine.
     /// CGGMP24 encodes its real protocol rounds inside the message payloads.
     /// Therefore, a local monotonic counter is sufficient and correct.
-    message_id: MsgId,
+    message_identifier: MsgId,
     /// Indicates if the protocol has been aborted.
     aborted: bool,
 }
@@ -92,7 +112,7 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
     ///   parameters.
     ///
     /// # Returns
-    /// * `Result<Self, Error>` - New protocol instance or error.
+    /// * `Result<Self, Errors>` - New protocol instance or error.
     pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
         let init: NodeSigningInit = match protocol_init {
             ProtocolInit::Signing(SigningInit::Node(init)) => init,
@@ -147,7 +167,6 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
             ));
         }
 
-        // Validate threshold and participants.
         if init.common.threshold == 0
             || init.common.threshold > init.common.participants
         {
@@ -160,8 +179,9 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
         // Deterministic signer selection for CGGMP24.
         //
         // Context: CGGMP24 requires the exact set of signing participants
-        // ("parties") to be known the protocol starts. Unlike Frost, there is
-        // no protocol message where the controller can announce who signs.
+        // ("parties") to be known before the protocol starts. Unlike Frost,
+        // there is no protocol message where the controller can announce who
+        // signs.
         //
         // In this system, `ProtocolInit` is shared across all protocols and
         // does not contain a list of signing participants. To keep the API
@@ -171,11 +191,11 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
         // The controller starts the signing session on all nodes.
         // All nodes know, the total number of participants (`participants`),
         // the signing threshold (`threshold`), the global key identifier
-        // (`key_id`). From these public values, every node independently
-        // derives the same signer set.
+        // (`key_identifier`). From these public values, every node
+        // independently derives the same signer set.
         //
         // Signer selection rule:
-        //   1. Hash the global `key_id` using SHA-256.
+        //   1. Hash the global `key_identifier` using SHA-256.
         //   2. Interpret the first 8 bytes of the hash as a big-endian `u64`.
         //   3. Reduce this number modulo `participants` to obtain a starting
         //      index.
@@ -183,24 +203,21 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
         //      from this index, with wrap-around.
         //
         // Why this is deterministic:
-        //   - `key_id` is identical on all nodes for a given MPC key.
+        //   - `key_identifier` is identical on all nodes for a given key.
         //   - SHA-256 is deterministic.
         //   - The arithmetic is pure and does not depend on local state.
         //   - Therefore, all nodes compute the *exact same* `parties` list.
         //
         // Why this provides rotation:
-        //   - Different `key_id`s produce different hashes.
+        //   - Different `key_identifier`s produce different hashes.
         //   - Different hashes produce different starting indices.
         //   - Over multiple keys (or sessions), different subsets of nodes are
         //     selected, distributing load and exposure.
 
-        // Hash the global key identifier to derive a
-        // deterministic starting index.
         let mut hasher: Sha256 = Sha256::new();
-        hasher.update(init.common.key_id.as_bytes());
+        hasher.update(init.common.key_identifier.as_bytes());
         let digest: Output<Sha256> = hasher.finalize();
 
-        // Use the first 8 bytes of the hash as a u64 to avoid modulo bias.
         let bytes: [u8; 8] = digest
             .get(0..8)
             .and_then(|slice: &[u8]| slice.try_into().ok())
@@ -218,8 +235,6 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
             ))
         })?;
 
-        // Build the signer set as `threshold` consecutive
-        // participant identifiers.
         let mut parties: Vec<u16> =
             Vec::with_capacity(init.common.threshold as usize);
         for index in 0..init.common.threshold {
@@ -243,54 +258,49 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
             parties.push(party_id);
         }
 
-        // Sort to ensure canonical ordering across all nodes.
         parties.sort();
 
-        // Sanity check: the local participant must be part of the signer set.
-        // If this check fails, it means the controller violated the MPC
-        // contract by starting a signing session on a node that is not
-        // selected by the deterministic signer selection rule.
         if !parties.contains(&stored.identifier) {
             return Err(Errors::InvalidParticipant(
-                "Local participant is not part of the signer set derived from 
-                key_id. Check that the controller is configured correctly."
+                "Local participant is not part of the signer set derived from \
+                key_identifier. Check that the controller is configured \
+                correctly."
                     .into(),
             ));
         }
 
-        // Prepare data to be signed as a digest.
         let data_to_sign: DataToSign<CggmpSecp256k1> =
             DataToSign::digest::<Sha256>(&init.common.message);
 
-        let execution_id_bytes: Vec<u8> = init.common.key_id.into_bytes();
+        let execution_id_bytes: Vec<u8> =
+            init.common.key_identifier.into_bytes();
 
-        // Extract public key bytes.
         let public_key: NonZero<Point<CggmpSecp256k1>> =
             key_share.core.shared_public_key;
         let public_key_bytes: Vec<u8> =
             public_key.to_bytes(true).as_ref().to_vec();
 
-        // Setup communication channels.
         let (incoming_transmitter, incoming_receiver): (
             Sender<Incoming<CggmpSigningMessage>>,
             Receiver<Incoming<CggmpSigningMessage>>,
         ) = unbounded();
         let (outgoing_transmitter, outgoing_receiver): (
-            Sender<round_based::Outgoing<CggmpSigningMessage>>,
-            Receiver<round_based::Outgoing<CggmpSigningMessage>>,
+            Sender<Vec<Outgoing<CggmpSigningMessage>>>,
+            Receiver<Vec<Outgoing<CggmpSigningMessage>>>,
         ) = unbounded();
         let (done_transmitter, done_receiver): (
-            Sender<WorkerDone>,
-            Receiver<WorkerDone>,
+            Sender<SigningWorkerDone>,
+            Receiver<SigningWorkerDone>,
         ) = bounded(1);
 
-        // Spawn the worker thread.
         spawn_worker(Worker {
-            key_share,
-            parties,
-            identifier: stored.identifier,
-            data_to_sign,
-            execution_id_bytes,
+            protocol: SigningProtocol {
+                identifier: stored.identifier,
+                parties,
+                key_share,
+                data_to_sign,
+                execution_id_bytes,
+            },
             incoming_receiver,
             outgoing_transmitter,
             done_transmitter,
@@ -305,23 +315,54 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
             incoming_transmitter,
             outgoing_receiver,
             done_receiver,
-            message_id: 0,
+            pending_messages: VecDeque::new(),
+            worker_done: None,
+            message_identifier: 0,
             aborted: false,
         })
+    }
+
+    /// Drains all pending outgoing messages from the worker and captures any
+    /// completion signal. This should be called at the beginning of each
+    /// round to ensure timely processing of worker outputs. It is also
+    /// called after handling an incoming message to capture any new outgoing
+    /// messages or completion signals triggered by that message.
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` if a message from the worker cannot be
+    ///   serialized.
+    fn drain_pending(&mut self) -> Result<(), Errors> {
+        while let Ok(batch) = self.outgoing_receiver.try_recv() {
+            for outgoing in batch {
+                let msg = self.wrap_outgoing(outgoing)?;
+                self.pending_messages.push_back(msg);
+            }
+        }
+        if self.worker_done.is_none() {
+            if let Ok(done) = self.done_receiver.try_recv() {
+                self.worker_done = Some(done);
+            }
+        }
+        Ok(())
     }
 
     /// Wraps an outgoing CGGMP message into a round-based protocol message.
     ///
     /// # Arguments
-    /// * `outgoing` (`Outgoing<CggmpMessage>`) - Outgoing CGGMP message.
+    /// * `outgoing` (`Outgoing<CggmpSigningMessage>`) - The outgoing message
+    ///   from the worker to wrap.
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` if the message cannot be serialized or
+    ///   wrapped.
     ///
     /// # Returns
-    /// * `Result<RoundMessage, Error>` - Wrapped round message or error.
+    /// * `Result<RoundMessage, Errors>` - The wrapped round message ready to
+    ///   be sent to the engine, or an error if wrapping fails.
     fn wrap_outgoing(
         &mut self,
         outgoing: Outgoing<CggmpSigningMessage>,
     ) -> Result<RoundMessage, Errors> {
-        // Serialize the CGGMP message.
         let inner: Vec<u8> =
             to_vec(&outgoing.msg).map_err(|error: Error| {
                 Errors::InvalidMessage(format!(
@@ -330,12 +371,9 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
                 ))
             })?;
 
-        // Wrap into CGGMP24 wire format.
-        let wire: Cggmp24Wire =
-            Cggmp24Wire::ProtocolMessage { payload: inner };
-        let payload: Vec<u8> = encode_wire(&wire)?;
+        let payload: Vec<u8> =
+            encode_wire(&Cggmp24Wire::ProtocolMessage { payload: inner })?;
 
-        // Determine recipient.
         let to: Option<u32> = match outgoing.recipient {
             MessageDestination::OneParty(one_party) => {
                 Some(u32::from(one_party))
@@ -348,13 +386,8 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
         // engine and `round_based` to correlate messages.
         // CGGMP24 protocol rounds are encoded internally in the message
         // contents handled by the worker/state machine.
-        let round: Round = self.message_id as Round;
-
-        // Keep a monotonic local counter for debug/telemetry purposes.
-        // Saturating add is used to avoid wrap-around in pathological cases.
-        // In practice, message_id will never reach MsgId::MAX during a
-        // session.
-        self.message_id = self.message_id.saturating_add(1);
+        let round: Round = self.message_identifier as Round;
+        self.message_identifier = self.message_identifier.saturating_add(1);
 
         Ok(RoundMessage {
             round,
@@ -367,72 +400,32 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
 
 #[async_trait]
 impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
-    /// Return the algorithm identifier.
-    ///
-    /// # Returns
-    /// * `Algorithm` - Algorithm identifier.
     fn algorithm(&self) -> Algorithm {
         Algorithm::Cggmp24EcdsaSecp256k1
     }
 
-    /// Return the threshold required for signing.
-    ///
-    /// # Returns
-    /// * `u32` - Threshold number of participants.
     fn threshold(&self) -> u32 {
         self.threshold
     }
 
-    /// Return the total number of participants.
-    ///
-    /// # Returns
-    /// * `u32` - Total number of participants.
     fn participants(&self) -> u32 {
         self.participants
     }
 
-    /// Return the current round number.
-    ///
-    /// This value is a transport-level progress indicator.
-    /// It does not correspond to CGGMP24 cryptographic rounds.
-    ///
-    /// # Returns
-    /// * `Round` - Current round number.
     fn current_round(&self) -> Round {
-        self.message_id as Round
+        self.message_identifier as Round
     }
 
-    /// Advance the protocol without receiving a message.
-    ///
-    /// # Errors
-    /// * `Error::Aborted` if the protocol has been aborted.
-    ///
-    /// # Returns
-    /// * `Option<RoundMessage>` - Message to send for the next round, if any.
     async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors> {
         if self.aborted {
             return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
-        // Try to receive an outgoing message from the worker.
-        // Note: the worker may emit multiple messages in quick succession.
-        // We intentionally process at most one per call to preserve
-        // back pressure and fairness with other protocols.
-        if let Ok(outgoing) = self.outgoing_receiver.try_recv() {
-            let round_message: RoundMessage = self.wrap_outgoing(outgoing)?;
-            return Ok(Some(round_message));
-        }
+        self.drain_pending()?;
 
-        Ok(None)
+        Ok(self.pending_messages.pop_front())
     }
 
-    /// Process an incoming round message and advance the protocol state.
-    ///
-    /// # Arguments
-    /// * `message` (`RoundMessage`) - Message received from another node.
-    ///
-    /// # Returns
-    /// * `Option<RoundMessage>` - Message to broadcast for the next round
     async fn handle_message(
         &mut self,
         round_message: RoundMessage,
@@ -441,10 +434,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
             return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
-        // Decode the incoming round message payload.
-        let Cggmp24Wire::ProtocolMessage { payload }: Cggmp24Wire =
+        let Cggmp24Wire::ProtocolMessage { payload } =
             decode_wire(&round_message.payload)?;
-        // Deserialize the CGGMP message.
+
         let message: CggmpSigningMessage =
             from_slice(&payload).map_err(|error: Error| {
                 Errors::InvalidMessage(format!(
@@ -464,46 +456,59 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                 ))
             })?;
 
-        let incoming: Incoming<Msg<CggmpSecp256k1, Sha256>> = Incoming {
-            id: round_message.round as MsgId,
-            sender: sender_u16,
-            // Message type based on presence of `to` field.
-            msg_type: if round_message.to.is_some() {
-                MessageType::P2P
-            } else {
-                MessageType::Broadcast
-            },
-            msg: message,
-        };
-
-        // Send the incoming message to the worker.
-        self.incoming_transmitter.send(incoming).map_err(
-            |error: SendError<Incoming<CggmpSigningMessage>>| {
+        self.incoming_transmitter
+            .send(Incoming {
+                id: round_message.round as MsgId,
+                sender: sender_u16,
+                msg_type: if round_message.to.is_some() {
+                    MessageType::P2P
+                } else {
+                    MessageType::Broadcast
+                },
+                msg: message,
+            })
+            .map_err(|error: SendError<Incoming<CggmpSigningMessage>>| {
                 Errors::Aborted(format!(
                     "Failed to send incoming message: {}",
                     error
                 ))
-            },
-        )?;
+            })?;
 
-        // Check if there are pending outputs first, return them before
-        // checking outgoing channel.
-        if let Ok(outgoing) = self.outgoing_receiver.try_recv() {
-            let round_message: RoundMessage = self.wrap_outgoing(outgoing)?;
-            return Ok(Some(round_message));
-        }
+        self.drain_pending()?;
 
-        Ok(None)
+        Ok(self.pending_messages.pop_front())
     }
 
-    /// Finalize the protocol and return the signature.
+    /// Runs the protocol to completion, processing all messages and advancing
+    /// rounds until the worker signals completion. This is used by the engine
+    /// to drive the protocol after the initial round message is produced.
     ///
     /// # Returns
-    /// * `ProtocolOutput` - Final signature output.
+    /// * `Result<(), Errors>` - Ok if the protocol completes successfully, or
+    ///   an error if any step fails.
+    fn is_done(&self) -> bool {
+        self.worker_done.is_some() && self.pending_messages.is_empty()
+    }
+
     async fn finalize(&mut self) -> Result<ProtocolOutput, Errors> {
-        match self.done_receiver.recv() {
-            Ok(WorkerDone::Ok(signature)) => {
-                // Convert k256 signature to r, s, v components.
+        if self.aborted {
+            return Err(Errors::Aborted("Protocol has been aborted.".into()));
+        }
+
+        let done: WorkerDone<CggmpSigningOutput> =
+            if let Some(done) = self.worker_done.take() {
+                done
+            } else {
+                self.done_receiver.recv().map_err(|error: RecvError| {
+                    Errors::FailedToSign(format!(
+                        "Failed to finalize protocol: {}",
+                        error
+                    ))
+                })?
+            };
+
+        match done {
+            SigningWorkerDone::Ok(signature) => {
                 let r: [u8; 32] =
                     signature.r.to_be_bytes().as_bytes().try_into().map_err(
                         |error: TryFromSliceError| {
@@ -524,7 +529,6 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                         },
                     )?;
 
-                // Reconstruct K256 signature.
                 let signature: K256Signature = K256Signature::from_scalars(
                     r, s,
                 )
@@ -535,7 +539,6 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                     ))
                 })?;
 
-                // Reconstruct verifying key from public key bytes.
                 let verifying_key: VerifyingKey =
                     VerifyingKey::from_sec1_bytes(&self.public_key_bytes)
                         .map_err(|error: EcdsaError| {
@@ -545,7 +548,6 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                             ))
                         })?;
 
-                // Recover recovery identifier.
                 let recovery_id: RecoveryId =
                     RecoveryId::trial_recovery_from_prehash(
                         &verifying_key,
@@ -567,13 +569,13 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
                     },
                 )))
             },
-            _ => {
-                Err(Errors::FailedToSign("Protocol execution failed.".into()))
+
+            SigningWorkerDone::Err => {
+                Err(Errors::FailedToSign("Protocol worker failed.".into()))
             },
         }
     }
 
-    /// Abort the protocol.
     fn abort(&mut self) {
         self.aborted = true;
     }

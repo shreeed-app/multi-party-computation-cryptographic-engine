@@ -69,7 +69,7 @@ impl Interceptor for ClientAuthInterceptor {
         )
         .map_err(|error: InvalidMetadataValueBytes| {
             Errors::InvalidToken(format!(
-                "Failed to convert Authorization header value to 
+                "Failed to convert Authorization header value to \
                 MetadataValue, got error: {}",
                 error
             ))

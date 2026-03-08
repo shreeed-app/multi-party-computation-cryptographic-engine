@@ -7,15 +7,15 @@ use std::{
 };
 
 use crate::{
-    auth::session::{identifier::SessionId, state::SessionState},
+    auth::session::{identifier::SessionIdentifier, state::SessionState},
     transport::errors::Errors,
 };
 
-/// This store is process-local and not persistent.
-/// Sessions are automatically expired after a TTL.
+/// This store is process-local and not persistent. Sessions are automatically
+/// expired after a TTL.
 pub struct SessionStore {
-    /// Mapping of session IDs to session entries.
-    pub sessions: RwLock<HashMap<SessionId, SessionEntry>>,
+    /// Mapping of session identifiers to session entries.
+    pub sessions: RwLock<HashMap<SessionIdentifier, SessionEntry>>,
     /// Session time-to-live duration.
     pub ttl: Duration,
 }
@@ -40,20 +40,22 @@ impl SessionStore {
         Self { sessions: RwLock::new(HashMap::new()), ttl }
     }
 
-    /// Create a new session and return its ID.
+    /// Create a new session and return its identifier.
     ///
     /// # Returns
     /// * `SessionId` - The identifier of the newly created session.
-    pub fn create(&self) -> SessionId {
-        let id: SessionId = SessionId::new();
+    pub fn create(&self) -> SessionIdentifier {
+        let id: SessionIdentifier = SessionIdentifier::new();
 
         let entry: SessionEntry = SessionEntry {
             state: SessionState::Initialized,
             last_updated: Instant::now(),
         };
 
-        let mut guard: RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>> =
-            Self::write_guard(&self.sessions);
+        let mut guard: RwLockWriteGuard<
+            '_,
+            HashMap<SessionIdentifier, SessionEntry>,
+        > = Self::write_guard(&self.sessions);
         guard.insert(id, entry);
 
         id
@@ -66,20 +68,26 @@ impl SessionStore {
     ///
     /// # Arguments
     /// * `id` (`SessionId`) - Session identifier.
-    /// * `f` (`F`) - Closure that performs the state transition.
+    /// * `func` (`F`) - Closure that performs the state transition.
     ///
     /// # Errors
-    /// * `Error` - Returns an error if the session is not found or the state
+    /// * `Errors` - Returns an error if the session is not found or the state
     ///   transition fails.
     ///
     /// # Returns
     /// * `R` - Returns the result of the closure on success.
-    pub fn with_session<F, R>(&self, id: SessionId, f: F) -> Result<R, Errors>
+    pub fn with_session<F, R>(
+        &self,
+        id: SessionIdentifier,
+        func: F,
+    ) -> Result<R, Errors>
     where
         F: FnOnce(&mut SessionState) -> Result<R, Errors>,
     {
-        let mut guard: RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>> =
-            Self::write_guard(&self.sessions);
+        let mut guard: RwLockWriteGuard<
+            '_,
+            HashMap<SessionIdentifier, SessionEntry>,
+        > = Self::write_guard(&self.sessions);
 
         let entry: &mut SessionEntry = guard
             .get_mut(&id)
@@ -90,7 +98,7 @@ impl SessionStore {
             return Err(Errors::SessionNotFound(id.to_string()));
         }
 
-        let result: R = f(&mut entry.state)?;
+        let result: R = func(&mut entry.state)?;
         entry.last_updated = Instant::now();
 
         Ok(result)
@@ -103,9 +111,11 @@ impl SessionStore {
     ///
     /// # Returns
     /// * `()` - Returns unit on success.
-    pub fn remove(&self, id: SessionId) {
-        let mut guard: RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>> =
-            Self::write_guard(&self.sessions);
+    pub fn remove(&self, id: SessionIdentifier) {
+        let mut guard: RwLockWriteGuard<
+            '_,
+            HashMap<SessionIdentifier, SessionEntry>,
+        > = Self::write_guard(&self.sessions);
         guard.remove(&id);
     }
 

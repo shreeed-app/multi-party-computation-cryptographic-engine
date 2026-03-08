@@ -1,122 +1,101 @@
+//! Integration tests for key generation flows.
+
+mod helpers;
+
+use helpers::cluster::start_cluster_once;
 use mpc_signer_engine::{
     auth::bearer_client::ClientAuthInterceptor,
-    config::{
-        controller::{ControllerRuntimeConfig, NodeConfig},
-        ipc::{AuthConfig, ControllerIpcConfig, NodeIpcConfig},
-        node::NodeRuntimeConfig,
-    },
+    config::ipc::AuthConfig,
     proto::signer::v1::{
         GenerateKeyRequest,
         GenerateKeyResponse,
         controller_client::ControllerClient,
     },
     protocols::algorithm::Algorithm,
-    runtime::{
-        api::RuntimeApi,
-        controller::ControllerRuntime,
-        node::NodeRuntime,
-    },
-    secrets::vault::config::VaultConfig,
 };
+use tonic::transport::Channel;
 
-mod helpers;
+use crate::helpers::config::ClusterConfig;
 
-use tokio::{
-    spawn,
-    time::{Duration, sleep},
-};
-use tonic::{service::interceptor::InterceptedService, transport::Channel};
+/// Run a key generation test for the given algorithm, connecting to the
+/// controller and asserting a successful response.
+///
+/// # Arguments
+/// * `algorithm` (`Algorithm`) - The key generation algorithm to test (e.g.,
+///   FROST with Ed25519, FROST with Schnorr over secp256k1, CGGMP24 with ECDSA
+///   over secp256k1).
+async fn run_key_generation_test(algorithm: Algorithm) {
+    start_cluster_once().await;
 
-async fn spawn_node(port: u16, participant_id: u32, token: &str) {
-    let config: NodeRuntimeConfig = NodeRuntimeConfig {
-        ipc: NodeIpcConfig {
-            node_id: participant_id.to_string(),
-            participant_id,
-            address: format!("127.0.0.1:{port}"),
-            ttl_seconds: 60,
-            auth: AuthConfig { token: token.to_string() },
-        },
-        vault: VaultConfig {
-            address: "http://127.0.0.1:8201".to_string(),
-            mount: "secret".to_string(),
-            prefix: "mpc/shares".to_string(),
-            field: "share".to_string(),
-            token: Some("token".to_string()),
-            namespace: None,
-        },
-    };
+    let cluster_config: &ClusterConfig = ClusterConfig::get();
 
-    spawn(async move {
-        NodeRuntime::run(config).await.unwrap();
-    });
-}
-
-async fn spawn_controller() {
-    let config: ControllerRuntimeConfig = ControllerRuntimeConfig {
-        ipc: ControllerIpcConfig {
-            address: "127.0.0.1:6000".to_string(),
-            service_id: "controller".to_string(),
-            auth: AuthConfig { token: "0".to_string() },
-        },
-        nodes: vec![
-            NodeConfig {
-                endpoint: "http://127.0.0.1:50051".to_string(),
-                participant_id: 1,
-                auth: AuthConfig { token: "1".to_string() },
-            },
-            NodeConfig {
-                endpoint: "http://127.0.0.1:50052".to_string(),
-                participant_id: 2,
-                auth: AuthConfig { token: "2".to_string() },
-            },
-            NodeConfig {
-                endpoint: "http://127.0.0.1:50053".to_string(),
-                participant_id: 3,
-                auth: AuthConfig { token: "3".to_string() },
-            },
-        ],
-    };
-
-    spawn(async move {
-        ControllerRuntime::run(config).await.unwrap();
-    });
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn frost_ed25519_keygen_3of3_runtime_real_auth() {
-    spawn_node(50051, 1, "1").await;
-    spawn_node(50052, 2, "2").await;
-    spawn_node(50053, 3, "3").await;
-
-    spawn_controller().await;
-
-    sleep(Duration::from_millis(800)).await;
-
+    // Connect to the controller using a gRPC client with bearer token
+    // authentication.
     let channel: Channel =
-        Channel::from_static("http://127.0.0.1:6000").connect().await.unwrap();
+        Channel::from_shared(cluster_config.controller_endpoint())
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
 
+    // Create an authentication interceptor using the controller token from the
+    // cluster configuration. This interceptor will add the necessary
+    // authentication headers to each gRPC request made by the client.
     let interceptor: ClientAuthInterceptor = ClientAuthInterceptor {
-        config: AuthConfig {
-        token: "0".to_string(), // Controller IPC token
-    },
+        config: AuthConfig { token: cluster_config.controller_token.clone() },
     };
 
+    // Create a gRPC client for the controller, wrapped with the authentication
+    // interceptor. This client will be used to send the key generation request
+    // to the controller.
     let mut client: ControllerClient<
-        InterceptedService<Channel, ClientAuthInterceptor>,
+        tonic::service::interceptor::InterceptedService<
+            Channel,
+            ClientAuthInterceptor,
+        >,
     > = ControllerClient::with_interceptor(channel, interceptor);
 
+    // Construct the key generation request with the appropriate parameters,
+    // including the key identifier, threshold, participant IDs, and algorithm.
+    // The key identifier is formatted as "test-{algorithm}".
     let request: GenerateKeyRequest = GenerateKeyRequest {
-        key_id: "frost-runtime-3of3".to_string(),
-        threshold: 3,
-        participants: 3,
-        algorithm: Algorithm::FrostEd25519.as_str().into(),
+        key_identifier: format!("test-{}", algorithm.as_str()),
+        threshold: cluster_config.threshold(),
+        participants: cluster_config.participants(),
+        algorithm: algorithm.as_str().into(),
     };
 
+    // Send the key generation request to the controller and await the
+    // response. If the request fails (e.g., due to a connection error or
+    // server error), the test will panic with the message "Key generation
+    // failed."
     let response: GenerateKeyResponse = client
         .generate_key(request)
         .await
-        .expect("keygen failed")
+        .expect("Key generation failed.")
         .into_inner();
 
-    println!("Public key: {:?}", response.result);
+    assert!(response.result.is_some());
 }
+
+/// Macro to generate a test function for a given algorithm.
+/// Each test runs the key generation flow 3 times to catch race conditions
+/// and non-deterministic failures.
+macro_rules! generate_algo_test {
+    ($test_name:ident, $algorithm:expr) => {
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn $test_name() {
+            run_key_generation_test($algorithm).await;
+        }
+    };
+}
+
+generate_algo_test!(test_frost_ed25519, Algorithm::FrostEd25519);
+generate_algo_test!(
+    test_frost_schnorr_secp256k1,
+    Algorithm::FrostSchnorrSecp256k1
+);
+generate_algo_test!(
+    test_cggmp24_ecdsa_secp256k1,
+    Algorithm::Cggmp24EcdsaSecp256k1
+);

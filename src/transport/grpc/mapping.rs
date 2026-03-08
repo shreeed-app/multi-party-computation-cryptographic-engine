@@ -8,10 +8,10 @@ use crate::transport::errors::Errors;
 /// Convert canonical errors into gRPC statuses. This mapping defines how
 /// errors are exposed over gRPC, without redefining error messages.
 impl From<Errors> for Status {
-    /// Map an `Error` into a gRPC `Status`.
+    /// Map an `Errors` into a gRPC `Status`.
     ///
     /// # Arguments
-    /// * `error` (`Error`) - Canonical error to convert.
+    /// * `error` (`Errors`) - Canonical error to convert.
     ///
     /// # Returns
     /// * `Status` - Corresponding gRPC status.

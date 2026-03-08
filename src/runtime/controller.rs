@@ -6,7 +6,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use tonic::transport::{Error as TransportError, Server};
+use tokio::sync::oneshot::Sender;
+use tonic::transport::{Error, Server};
 use tonic_middleware::RequestInterceptorLayer;
 use tonic_reflection::server::{
     Builder as ReflectionBuilder,
@@ -46,13 +47,18 @@ impl RuntimeApi for ControllerRuntime {
     /// # Arguments
     /// * `config` (`ControllerRuntimeConfig`) - Configuration for the
     ///   controller runtime.
+    /// * `ready` (`Sender<()>`) - Channel sender to signal when the runtime is
+    ///   ready.
     ///
     /// # Errors
-    /// * `Error` - If any error occurs during runtime execution.
+    /// * `Errors` - If any error occurs during runtime execution.
     ///
     /// # Returns
     /// * `()` - On successful execution.
-    async fn run(config: ControllerRuntimeConfig) -> Result<(), Errors> {
+    async fn run(
+        config: ControllerRuntimeConfig,
+        ready: Sender<()>,
+    ) -> Result<(), Errors> {
         LoggingEngine::init("Controller");
 
         tracing::info!(
@@ -62,8 +68,16 @@ impl RuntimeApi for ControllerRuntime {
         );
 
         // Create nodes clients for each configured node.
-        let nodes: Vec<NodeIpcClient> =
-            config.nodes.into_iter().map(NodeIpcClient::new).collect();
+        let nodes: Vec<NodeIpcClient> = config
+            .nodes
+            .into_iter()
+            .map(NodeIpcClient::new)
+            .map(|result: Result<NodeIpcClient, Error>| {
+                result.map_err(|error: Error| {
+                    Errors::ConfigError(error.to_string())
+                })
+            })
+            .collect::<Result<Vec<NodeIpcClient>, Errors>>()?;
         tracing::debug!("Created node clients for configured nodes.");
 
         // Create the gRPC server for the controller, injecting the controller
@@ -94,16 +108,19 @@ impl RuntimeApi for ControllerRuntime {
         tracing::debug!("Configured gRPC reflection service.");
 
         // Start the gRPC server and serve requests.
-        Server::builder()
-            .layer(ConcurrencyLimitLayer::new(100))
-            .layer(TimeoutLayer::new(Duration::from_secs(10)))
-            .layer(auth_layer)
-            .add_service(reflection_service)
-            .add_service(ControllerServer::new(server))
-            .serve(address)
-            .await
-            .map_err(|error: TransportError| {
-                Errors::ConfigError(error.to_string())
-            })
+        let server: impl Future<Output = Result<(), Error>> =
+            Server::builder()
+                .layer(ConcurrencyLimitLayer::new(100))
+                .layer(TimeoutLayer::new(Duration::from_secs(100)))
+                .layer(auth_layer)
+                .add_service(reflection_service)
+                .add_service(ControllerServer::new(server))
+                .serve(address);
+
+        ready.send(()).ok();
+
+        server.await?;
+
+        Ok(())
     }
 }

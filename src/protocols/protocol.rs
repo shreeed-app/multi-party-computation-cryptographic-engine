@@ -3,9 +3,10 @@
 use async_trait::async_trait;
 
 use crate::{
+    proto::signer::v1::RoundMessage,
     protocols::{
         algorithm::Algorithm,
-        types::{ProtocolOutput, Round, RoundMessage},
+        types::{ProtocolOutput, Round},
     },
     transport::errors::Errors,
 };
@@ -47,7 +48,7 @@ pub trait Protocol: Send + Sync {
     /// * `Option<RoundMessage>` - Message to broadcast for the next round.
     ///
     /// # Errors
-    /// * `Error` - If message processing fails.
+    /// * `Errors` - If message processing fails.
     async fn handle_message(
         &mut self,
         message: RoundMessage,
@@ -60,7 +61,7 @@ pub trait Protocol: Send + Sync {
     /// * `Option<RoundMessage>` - Message to broadcast for the next round.
     ///
     /// # Errors
-    /// * `Error` - If advancing the round fails.
+    /// * `Errors` - If advancing the round fails.
     async fn next_round(&mut self) -> Result<Option<RoundMessage>, Errors>;
 
     /// Finalize the protocol and return the result.
@@ -70,8 +71,18 @@ pub trait Protocol: Send + Sync {
     /// * `ProtocolOutput` - Final output of the protocol.
     ///
     /// # Errors
-    /// * `Error` - If finalization fails.
+    /// * `Errors` - If finalization fails.
     async fn finalize(&mut self) -> Result<ProtocolOutput, Errors>;
+
+    /// Check if the protocol has completed all rounds and is ready for
+    /// finalization. This method can be used to determine if the protocol
+    /// is done without attempting to finalize it.
+    ///
+    /// # Returns
+    /// * `bool` - `true` if the protocol is done, `false` otherwise.
+    fn is_done(&self) -> bool {
+        false
+    }
 
     /// Abort the protocol.
     /// After calling this method, no further operations should be performed.

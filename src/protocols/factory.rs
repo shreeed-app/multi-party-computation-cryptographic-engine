@@ -3,9 +3,15 @@
 use crate::{
     protocols::{
         algorithm::Algorithm,
-        cggmp24::node::tasks::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1NodeSigning,
+        cggmp24::{
+            controller::keys::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1ControllerKeyGeneration,
+            node::{
+                keys::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1NodeKeyGeneration,
+                tasks::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1NodeSigning,
+            },
+        },
         frost::{
-            controller::keys::ed25519::FrostEd25519ControllerKeyGeneration,
+            controller::keys::FrostControllerKeyGeneration,
             node::{
                 keys::{
                     ed25519::FrostEd25519NodeKeyGeneration,
@@ -64,7 +70,7 @@ impl ProtocolFactory {
                     )),
                     // CGGMP-24 secp256k1 node key generation.
                     Algorithm::Cggmp24EcdsaSecp256k1 => Ok(Box::new(
-                        Cggmp24EcdsaSecp256k1NodeSigning::try_new(
+                        Cggmp24EcdsaSecp256k1NodeKeyGeneration::try_new(
                             ProtocolInit::KeyGeneration(
                                 KeyGenerationInit::Node(init),
                             ),
@@ -74,16 +80,21 @@ impl ProtocolFactory {
 
                 KeyGenerationInit::Controller(init) => {
                     match init.common.algorithm {
-                        // Frost ed25519 node key generation.
-                        Algorithm::FrostEd25519 => Ok(Box::new(
-                            FrostEd25519ControllerKeyGeneration::try_new(
+                        // Frost ed25519 node key generation.s
+                        Algorithm::FrostEd25519 | Algorithm::FrostSchnorrSecp256k1 => Ok(Box::new(
+                            FrostControllerKeyGeneration::try_new(
                                 ProtocolInit::KeyGeneration(
                                     KeyGenerationInit::Controller(init),
                                 ),
                             )?,
                         )),
-                        _ => Err(Errors::UnsupportedAlgorithm(
-                            init.common.algorithm.as_str().into(),
+                        // CGGMP-24 secp256k1 node key generation.
+                        Algorithm::Cggmp24EcdsaSecp256k1 => Ok(Box::new(
+                            Cggmp24EcdsaSecp256k1ControllerKeyGeneration::try_new(
+                                ProtocolInit::KeyGeneration(
+                                    KeyGenerationInit::Controller(init),
+                                ),
+                            )?,
                         )),
                     }
                 },

@@ -1,6 +1,7 @@
 //! Runtime API definitions.
 
 use async_trait::async_trait;
+use tokio::sync::oneshot::Sender;
 
 use crate::{config::api::RuntimeConfig, transport::errors::Errors};
 
@@ -15,13 +16,18 @@ pub trait RuntimeApi {
     ///
     /// # Arguments
     /// * `config` (`NodeRuntimeConfig`) - Configuration for the runtime.
+    /// * `ready` (`Sender<()>`) - Channel sender to signal when the runtime is
+    ///   ready.
     ///
     /// # Errors
-    /// * `Error` - If any error occurs during runtime execution.
+    /// * `Errors` - If any error occurs during runtime execution.
     ///
     /// # Returns
     /// * `()` - On successful execution.
-    async fn run(config: Self::Config) -> Result<(), Errors>
+    async fn run(
+        config: Self::Config,
+        ready: Sender<()>,
+    ) -> Result<(), Errors>
     where
         Self: Sized;
 }

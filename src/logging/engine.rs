@@ -8,6 +8,7 @@ use tracing_appender::{
 use tracing_subscriber::{
     EnvFilter,
     Registry,
+    filter::FromEnvError,
     fmt::{
         self,
         Layer,
@@ -35,7 +36,13 @@ impl LoggingEngine {
     ///   "controller").
     pub fn init(service_name: &str) {
         let env_filter: EnvFilter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(Level::INFO.to_string()));
+            .unwrap_or_else(|error: FromEnvError| {
+                eprintln!(
+                    "Failed to initialize environment filter: {}",
+                    error
+                );
+                EnvFilter::new(Level::INFO.to_string())
+            });
 
         let file_appender: RollingFileAppender =
             rolling::daily("logs", "history.log");

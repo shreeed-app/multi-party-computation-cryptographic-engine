@@ -9,7 +9,7 @@ use tonic::Status;
 /// * `error` (`Status`) - The gRPC status to map.
 ///
 /// # Returns
-/// * `Error` - The corresponding canonical error type.
+/// * `Errors` - The corresponding canonical error type.
 pub fn map_status(error: Status) -> Errors {
     Errors::Generic(error.to_string())
 }
@@ -37,8 +37,8 @@ pub enum Errors {
     #[error("Invalid authorization token. {0}")]
     InvalidToken(String),
 
-    /// Session not found: no session exists for the given ID.
-    #[error("Invalid session ID. {0}")]
+    /// Session not found: no session exists for the given identifier.
+    #[error("Invalid session identifier. {0}")]
     SessionNotFound(String),
 
     /// Session is not in the initialized state.

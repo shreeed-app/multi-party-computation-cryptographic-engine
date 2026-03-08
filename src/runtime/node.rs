@@ -6,7 +6,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use tonic::transport::{Error as TransportError, Server};
+use tokio::sync::oneshot::Sender;
+use tonic::transport::{Error, Server};
 use tonic_middleware::RequestInterceptorLayer;
 use tonic_reflection::server::{
     Builder as ReflectionBuilder,
@@ -40,12 +41,15 @@ impl RuntimeApi for NodeRuntime {
     /// * `config` (`NodeRuntimeConfig`) - Configuration for the node runtime.
     ///
     /// # Errors
-    /// * `Error` - If any error occurs during runtime execution.
+    /// * `Errors` - If any error occurs during runtime execution.
     ///
     /// # Returns
     /// * `()` - On successful execution.
-    async fn run(config: NodeRuntimeConfig) -> Result<(), Errors> {
-        LoggingEngine::init("Node");
+    async fn run(
+        config: NodeRuntimeConfig,
+        ready: Sender<()>,
+    ) -> Result<(), Errors> {
+        LoggingEngine::init(format!("Node {}", config.ipc.node_id).as_str());
 
         tracing::info!(
             address = %config.ipc.address,
@@ -58,7 +62,7 @@ impl RuntimeApi for NodeRuntime {
         tracing::debug!("Initialized Hashicorp Vault provider.");
 
         // Build the node engine with session TTL from configuration.
-        let engine: NodeEngine = EngineBuilder::new()
+        let engine: NodeEngine = EngineBuilder::default()
             .session_ttl(Duration::from_secs(config.ipc.ttl_seconds))
             .build();
         tracing::debug!(
@@ -96,16 +100,19 @@ impl RuntimeApi for NodeRuntime {
 
         // Start the gRPC server and handle any errors that occur during
         // startup.
-        Server::builder()
-            .layer(ConcurrencyLimitLayer::new(100))
-            .layer(TimeoutLayer::new(Duration::from_secs(10)))
-            .layer(auth_layer)
-            .add_service(reflection_service)
-            .add_service(NodeServer::new(server))
-            .serve(address)
-            .await
-            .map_err(|error: TransportError| {
-                Errors::ConfigError(error.to_string())
-            })
+        let server: impl Future<Output = Result<(), Error>> =
+            Server::builder()
+                .layer(ConcurrencyLimitLayer::new(100))
+                .layer(TimeoutLayer::new(Duration::from_secs(100)))
+                .layer(auth_layer)
+                .add_service(reflection_service)
+                .add_service(NodeServer::new(server))
+                .serve(address);
+
+        ready.send(()).ok();
+
+        server.await?;
+
+        Ok(())
     }
 }

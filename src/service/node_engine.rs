@@ -1,274 +1,354 @@
-//! Engine implementation.
+//! Engine implementation (thread-safe per session).
 
-use std::{
-    collections::HashMap,
-    sync::{PoisonError, RwLock, RwLockWriteGuard},
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use tokio::{
+    sync::{Mutex, MutexGuard},
+    task::yield_now,
+};
 use tracing::instrument;
 
 use crate::{
     auth::session::{
-        identifier::SessionId,
+        identifier::SessionIdentifier,
         state::SessionState,
         store::SessionStore,
     },
+    proto::signer::v1::{self as proto, RoundMessage},
     protocols::{
         factory::ProtocolFactory,
         protocol::Protocol,
-        types::{ProtocolInit, ProtocolOutput, RoundMessage},
+        types::{ProtocolInit, ProtocolOutput},
     },
     service::{api::EngineApi, entry::SessionEntry},
     transport::errors::Errors,
 };
 
-/// Engine implementation.
+/// Node engine. Each session is executed in-memory and protected by a mutex to
+/// guarantee single-threaded execution per session. Sessions are automatically
+/// expired after a TTL.
 pub struct NodeEngine {
-    /// Session store for managing session life cycles.
+    /// In-memory session store for lifecycle management.
     pub sessions: SessionStore,
-    /// Live sessions held in memory.
-    pub live: RwLock<HashMap<SessionId, SessionEntry>>,
+    /// Live session entries for active sessions.
+    pub live: Mutex<HashMap<SessionIdentifier, Arc<Mutex<SessionEntry>>>>,
 }
 
 impl NodeEngine {
-    /// Create a new engine instance.
+    /// Create a new node engine with the given session TTL.
     ///
     /// # Arguments
-    /// * `ttl` (`Duration`) - Session time-to-live.
+    /// * `ttl` (`Duration`) - Time-to-live for sessions.
     ///
     /// # Returns
-    /// * `Self` - New engine instance.
+    /// * `Self` - A new node engine instance.
     pub fn new(ttl: Duration) -> Self {
         Self {
             sessions: SessionStore::new(ttl),
-            live: RwLock::new(HashMap::new()),
+            live: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Best-effort removal of a live session entry.
+    /// Helper to retrieve a live session entry by ID.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Session identifier.
+    /// * `session_id` (`SessionId`) - Target session identifier.
+    ///
+    /// # Errors
+    /// * `Errors::SessionNotFound` if the session ID does not exist in live
+    ///   sessions.
     ///
     /// # Returns
-    /// * `()` - Nothing.
-    fn remove_live(&self, session_id: SessionId) {
-        if let Ok(mut live) = self.live.write() {
-            live.remove(&session_id);
-        }
+    /// * `Arc<Mutex<SessionEntry>>` - The live session entry wrapped in an
+    ///   `Arc<Mutex<>>` for thread-safe access.
+    async fn get_entry(
+        &self,
+        session_id: SessionIdentifier,
+    ) -> Result<Arc<Mutex<SessionEntry>>, Errors> {
+        self.live
+            .lock()
+            .await
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| Errors::SessionNotFound(session_id.to_string()))
     }
 }
 
 #[async_trait]
 impl EngineApi for NodeEngine {
-    /// Start a new signing session.
+    #[instrument(skip(self, init))]
+    /// Start a distributed session.
     ///
     /// # Arguments
-    /// * `init` (`ProtocolInit`) - Protocol initialization parameters.
+    /// * `init` (`ProtocolInit`) - Protocol initialization context.
     ///
     /// # Errors
-    /// * `Error` - If starting the session fails.
+    /// * `Errors::UnsupportedAlgorithm` if the algorithm is not supported.
+    /// * `Errors::InvalidProtocolInit` if the protocol initialization context
+    ///   is invalid.
+    /// * `Errors::LiveLockAcquireError` if the engine fails to acquire lock on
+    ///  internal storage.
     ///
     /// # Returns
-    /// * `(SessionId, RoundMessage)` - New session ID and first round message.
-    #[instrument(skip(self, init))]
+    /// * `(SessionId, Vec<RoundMessage>)` - Session identifier and initial
+    ///   round messages (empty for controller since it executes
+    ///   synchronously).
     async fn start_session(
         &self,
         init: ProtocolInit,
-    ) -> Result<(SessionId, RoundMessage), Errors> {
-        tracing::debug!(?init, "Starting protocol session.");
+    ) -> Result<(SessionIdentifier, Vec<RoundMessage>), Errors> {
+        tracing::debug!("Starting session with init: {:?}", init);
 
-        let session_id: SessionId = self.sessions.create();
+        let session_id: SessionIdentifier = self.sessions.create();
 
         let mut protocol: Box<dyn Protocol> = ProtocolFactory::create(init)
-            .inspect_err(|_| self.sessions.remove(session_id))?;
+            .inspect_err(|error: &Errors| {
+                tracing::error!(
+                    "Failed to create protocol for session {}: {}",
+                    session_id,
+                    error
+                );
 
-        let round: RoundMessage =
-            protocol.next_round().await?.ok_or_else(|| {
                 self.sessions.remove(session_id);
-                Errors::InvalidState(session_id.to_string())
             })?;
 
-        self.sessions.with_session(
-            session_id,
-            |state: &mut SessionState| {
-                state.advance_round(0);
-                Ok(())
-            },
-        )?;
+        // Wait for the first round message to be produced by the protocol.
+        // This ensures that the session is fully initialized before accepting
+        // any messages.
+        let first_round: RoundMessage = loop {
+            if let Some(message) = protocol.next_round().await? {
+                tracing::debug!(
+                    "First round message produced for session {}: {:?}",
+                    session_id,
+                    message
+                );
 
-        let entry: SessionEntry = SessionEntry {
-            state: SessionState::Initialized,
-            protocol: Some(protocol),
+                break message;
+            }
+            yield_now().await;
         };
 
-        self.live
-            .write()
-            .map_err(
-                |error: PoisonError<
-                    RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>>,
-                >| {
-                    Errors::LiveLockAcquireError(format!(
-                        "Failed to acquire live lock: {}",
-                        error
-                    ))
-                },
-            )?
-            .insert(session_id, entry);
+        self.live.lock().await.insert(
+            session_id,
+            Arc::new(Mutex::new(SessionEntry {
+                state: SessionState::Initialized,
+                protocol: Some(protocol),
+            })),
+        );
 
-        Ok((session_id, round))
+        Ok((session_id, vec![first_round]))
     }
 
-    /// Submit a round message.
+    /// Submit a round message to the session.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Session identifier.
+    /// * `session_id` (`SessionId`) - Identifier of the session to which the
+    ///   message belongs.
+    /// * `message` (`RoundMessage`) - Message received from another node.
     ///
     /// # Errors
-    /// * `Error` - If submitting the round fails.
+    /// * `Errors::InvalidState` if the session is not in a valid state to
+    ///   accept messages.
     ///
     /// # Returns
-    /// * `RoundMessage` - Response round message.
+    /// * `Vec<RoundMessage>` - Messages to broadcast for the next round after
+    ///   processing the submitted message.
     #[instrument(skip(self, message), fields(session_id = %session_id))]
     async fn submit_round(
         &self,
-        session_id: SessionId,
-        message: RoundMessage,
-    ) -> Result<RoundMessage, Errors> {
-        tracing::debug!(?message, "Submitting round message.");
-
-        self.sessions
-            .with_session(session_id, |state: &mut SessionState| {
-                state.validate_round(message.round)
-            })?;
-
-        let mut protocol: Box<dyn Protocol> = {
-            let mut live: RwLockWriteGuard<
-                '_,
-                HashMap<SessionId, SessionEntry>,
-            > = self.live.write().map_err(
-                |error: PoisonError<
-                    RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>>,
-                >| {
-                    Errors::LiveLockAcquireError(format!(
-                        "Failed to acquire live lock: {}",
-                        error
-                    ))
-                },
-            )?;
-
-            let entry: &mut SessionEntry =
-                live.get_mut(&session_id).ok_or_else(|| {
-                    Errors::SessionNotFound(session_id.to_string())
-                })?;
-
-            entry.protocol.take().ok_or_else(|| {
-                Errors::InvalidState("Protocol missing.".into())
-            })?
-        };
-
-        let response: RoundMessage =
-            protocol
-                .handle_message(message)
-                .await?
-                .ok_or_else(|| Errors::InvalidState(session_id.to_string()))?;
-
-        let mut live: RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>> =
-            self.live.write().map_err(
-                |error: PoisonError<
-                    RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>>,
-                >| {
-                    Errors::LiveLockAcquireError(format!(
-                        "Failed to acquire live lock: {}",
-                        error
-                    ))
-                },
-            )?;
-
-        let entry: &mut SessionEntry = live
-            .get_mut(&session_id)
-            .ok_or_else(|| Errors::SessionNotFound(session_id.to_string()))?;
-
-        entry.protocol = Some(protocol);
-
-        self.sessions.with_session(
+        session_id: SessionIdentifier,
+        message: proto::RoundMessage,
+    ) -> Result<Vec<RoundMessage>, Errors> {
+        tracing::debug!(
+            "Submitting round message for session {}: {:?}",
             session_id,
-            |state: &mut SessionState| {
-                state.advance_round(response.round);
-                Ok(())
-            },
-        )?;
+            message
+        );
 
-        Ok(response)
+        let entry: Arc<Mutex<SessionEntry>> =
+            self.get_entry(session_id).await?;
+        let mut entry: MutexGuard<'_, SessionEntry> = entry.lock().await;
+
+        let protocol: &mut Box<dyn Protocol + 'static> = entry
+            .protocol
+            .as_mut()
+            .ok_or_else(|| Errors::InvalidState("Protocol missing.".into()))?;
+
+        let round: u32 = message.round;
+        let mut produced: Vec<RoundMessage> = Vec::new();
+
+        if let Some(message) = protocol.handle_message(message).await? {
+            tracing::debug!(
+                "Message produced after handling round message for session {}: {:?}",
+                session_id,
+                message
+            );
+            produced.push(message);
+        }
+
+        // Since the controller executes the protocol synchronously, we can
+        // simply call `next_round()` until the protocol is done to collect all
+        // produced messages for the current round.
+        loop {
+            match protocol.next_round().await? {
+                Some(message) => produced.push(message),
+                None => break,
+            }
+        }
+
+        entry.state.advance_round(round);
+        Ok(produced)
     }
 
-    /// Finalize a session.
+    /// Collect round messages produced by the worker for the current round.
+    ///
+    /// Polls the protocol until at least one outgoing message is available or
+    /// the protocol signals completion. The mutex is released between polls to
+    /// allow concurrent `submit_round` calls to deliver incoming messages to
+    /// the worker — which is what unblocks message production.
+    ///
+    /// # Why the retry loop?
+    /// The worker runs on a separate OS thread and produces outgoing messages
+    /// asynchronously. When `collect_round` is called, the worker may not have
+    /// had time to process the last incoming message and flush its outgoing
+    /// batch yet. Returning immediately with an empty result would cause the
+    /// controller to stall — it would see no messages and loop forever without
+    /// making progress.
+    ///
+    /// Releasing the mutex before `yield_now()` is critical: holding it while
+    /// waiting would block `submit_round` from delivering incoming messages to
+    /// the worker, deadlocking the protocol.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Session identifier.
+    /// * `session_id` (`SessionId`) - Target session identifier.
     ///
     /// # Errors
-    /// * `Error` - If finalization fails.
+    /// * `Errors::SessionNotFound` if the session does not exist.
+    /// * `Errors::InvalidState` if the protocol is missing from the session.
+    /// * Any error propagated from `Protocol::next_round`.
     ///
     /// # Returns
-    /// * `ProtocolOutput` - Final signature.
+    /// * `(Vec<RoundMessage>, bool)` - Outgoing messages produced for this
+    ///   round, and a boolean indicating whether the protocol is complete.
+    #[instrument(skip(self), fields(session_id = %session_id))]
+    async fn collect_round(
+        &self,
+        session_id: SessionIdentifier,
+    ) -> Result<(Vec<proto::RoundMessage>, bool), Errors> {
+        tracing::debug!(
+            "Collecting round messages for session {}.",
+            session_id
+        );
+
+        let entry: Arc<Mutex<SessionEntry>> =
+            self.get_entry(session_id).await?;
+
+        loop {
+            // Acquire the mutex, drain all messages the worker has produced so
+            // far, then release it before yielding. Releasing before yield is
+            // critical — holding the mutex while waiting would block
+            // `submit_round` from delivering incoming messages to the worker,
+            // which is the only thing that can unblock message production.
+            let (produced, done) = {
+                let mut entry: MutexGuard<'_, SessionEntry> =
+                    entry.lock().await;
+
+                let protocol: &mut Box<dyn Protocol + 'static> =
+                    entry.protocol.as_mut().ok_or_else(|| {
+                        Errors::InvalidState("Protocol missing.".into())
+                    })?;
+
+                // Drain all messages currently available from the worker. Each
+                // call to `next_round` pops one message from the pending queue
+                // (which was populated by `drain_pending` from the worker's
+                // outgoing channel). Loop until the queue is empty.
+                let mut produced: Vec<RoundMessage> = Vec::new();
+                loop {
+                    match protocol.next_round().await? {
+                        Some(message) => produced.push(message),
+                        None => break,
+                    }
+                }
+
+                (produced, protocol.is_done())
+            }; // mutex released here — submit_round can now acquire it.
+
+            if !produced.is_empty() || done {
+                tracing::debug!(
+                    "Collected round messages for session {}: {:?}",
+                    session_id,
+                    produced
+                );
+
+                return Ok((produced, done));
+            }
+
+            // Nothing produced yet and protocol not done — the worker is still
+            // processing the last incoming message batch. Yield to the Tokio
+            // runtime so other tasks (including submit_round) can run, then
+            // retry.
+            yield_now().await;
+        }
+    }
+
+    /// Collect round messages from all participants for the current round.
+    ///
+    /// # Arguments
+    /// * `session_id` (`SessionId`) - Identifier of the session for which to
+    ///   collect messages.
+    ///
+    /// # Errors
+    /// * `Errors::InvalidState` if the session is not in a valid state to
+    ///   finalize.
+    ///
+    /// # Returns
+    /// * `ProtocolOutput` - Collected messages for the current round.
     #[instrument(skip(self), fields(session_id = %session_id))]
     async fn finalize(
         &self,
-        session_id: SessionId,
+        session_id: SessionIdentifier,
     ) -> Result<ProtocolOutput, Errors> {
-        tracing::debug!(?session_id, "Finalizing protocol session.");
+        tracing::debug!("Finalizing session {}.", session_id);
 
         self.sessions
             .with_session(session_id, |state: &mut SessionState| {
                 state.finalize()
             })?;
 
-        let mut protocol: Box<dyn Protocol> = {
-            let mut live: RwLockWriteGuard<
-                '_,
-                HashMap<SessionId, SessionEntry>,
-            > = self.live.write().map_err(
-                |error: PoisonError<
-                    RwLockWriteGuard<'_, HashMap<SessionId, SessionEntry>>,
-                >| {
-                    Errors::LiveLockAcquireError(format!(
-                        "Failed to acquire live lock: {}",
-                        error
-                    ))
-                },
-            )?;
-
-            let entry: SessionEntry =
-                live.remove(&session_id).ok_or_else(|| {
-                    Errors::SessionNotFound(session_id.to_string())
-                })?;
-
-            entry.protocol.ok_or_else(|| {
-                Errors::InvalidState("Protocol missing.".into())
+        let entry: Arc<Mutex<SessionEntry>> = {
+            self.live.lock().await.remove(&session_id).ok_or_else(|| {
+                Errors::SessionNotFound(session_id.to_string())
             })?
         };
 
-        let output: ProtocolOutput = protocol.finalize().await?;
+        let mut entry: MutexGuard<'_, SessionEntry> = entry.lock().await;
+        let protocol: &mut Box<dyn Protocol + 'static> = entry
+            .protocol
+            .as_mut()
+            .ok_or_else(|| Errors::InvalidState("Protocol missing.".into()))?;
 
-        Ok(output)
+        Ok(protocol.finalize().await?)
     }
 
-    /// Abort a session.
+    /// Start a distributed signing session.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Session identifier.
+    /// * `request` (`GenerateKeyRequest`) - The request containing signing
+    ///   parameters.
     ///
     /// # Errors
-    /// * `Error` - If aborting the session fails.
+    /// * `Status` - If the algorithm is unsupported, protocol initialization
+    ///   fails, or if finalization fails.
     ///
     /// # Returns
-    /// * `()` - Nothing.
+    /// * `GenerateKeyResponse` - The response containing the generated key.
     #[instrument(skip(self), fields(session_id = %session_id))]
-    async fn abort(&self, session_id: SessionId) -> Result<(), Errors> {
-        tracing::debug!(?session_id, "Aborting protocol session.");
+    async fn abort(
+        &self,
+        session_id: SessionIdentifier,
+    ) -> Result<(), Errors> {
+        tracing::debug!("Aborting session {}.", session_id);
 
         self.sessions.with_session(
             session_id,
@@ -278,14 +358,15 @@ impl EngineApi for NodeEngine {
             },
         )?;
 
-        if let Ok(mut live) = self.live.write()
-            && let Some(entry) = live.get_mut(&session_id)
-            && let Some(mut protocol) = entry.protocol.take()
-        {
-            protocol.abort();
-        }
+        let entry: Option<Arc<Mutex<SessionEntry>>> =
+            self.live.lock().await.remove(&session_id);
 
-        self.remove_live(session_id);
+        if let Some(entry) = entry {
+            let mut entry: MutexGuard<'_, SessionEntry> = entry.lock().await;
+            if let Some(protocol) = entry.protocol.as_mut() {
+                protocol.abort();
+            }
+        }
 
         Ok(())
     }

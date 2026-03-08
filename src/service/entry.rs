@@ -5,9 +5,8 @@ use crate::{
     protocols::protocol::Protocol,
 };
 
-/// A live session entry held in memory.
-/// The protocol is protected by a mutex to guarantee
-/// single-threaded execution per session.
+/// A live session entry held in memory. The protocol is protected by a mutex
+/// to guarantee single-threaded execution per session.
 pub struct SessionEntry {
     /// Current session state.
     pub state: SessionState,

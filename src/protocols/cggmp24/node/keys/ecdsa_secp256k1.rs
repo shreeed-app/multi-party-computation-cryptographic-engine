@@ -178,7 +178,7 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     ///
     /// # Errors
     /// * `Errors::InvalidMessage` - If there is an error in receiving messages
-    ///  from the worker or in processing them.
+    ///   from the worker or in processing them.
     ///
     /// # Returns
     /// * `Result<(), Errors>` - Ok if messages are successfully drained and
@@ -191,10 +191,10 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                 self.pending_messages.push_back(message);
             }
         }
-        if self.worker_done.is_none() {
-            if let Ok(done) = self.done_receiver.try_recv() {
-                self.worker_done = Some(done);
-            }
+        if self.worker_done.is_none()
+            && let Ok(done) = self.done_receiver.try_recv()
+        {
+            self.worker_done = Some(done);
         }
         Ok(())
     }
@@ -381,7 +381,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                     key_share: Some(Secret::new(blob)),
                     public_key,
                     public_key_package: to_vec(&incomplete_key_share)
-                        .map_err(|e| Errors::InvalidKeyShare(e.to_string()))?,
+                        .map_err(|error: Error| {
+                            Errors::InvalidKeyShare(error.to_string())
+                        })?,
                 })
             },
 

@@ -14,7 +14,10 @@ use crate::{
     protocols::{
         algorithm::Algorithm,
         codec::{decode_wire, encode_wire},
-        frost::{stored_key::FrostStoredKey, wire::FrostWire},
+        frost::{
+            stored_key::{ArchivedFrostStoredKey, FrostStoredKey},
+            wire::FrostWire,
+        },
         protocol::Protocol,
         types::{
             NodeSigningInit,
@@ -262,15 +265,16 @@ impl<C: FrostSigningCurve> FrostNodeSigning<C> {
         // Decode the FrostStoredKey from the Vault secret blob (rkyv).
         let stored: FrostStoredKey =
             init.key_share.with_ref(|bytes: &Vec<u8>| {
-                let archived = access::<Archived<FrostStoredKey>, RkyvError>(
-                    bytes.as_slice(),
-                )
-                .map_err(|error: RkyvError| {
-                    Errors::InvalidKeyShare(format!(
-                        "Failed to access archived key: {}",
-                        error
-                    ))
-                })?;
+                let archived: &ArchivedFrostStoredKey =
+                    access::<Archived<FrostStoredKey>, RkyvError>(
+                        bytes.as_slice(),
+                    )
+                    .map_err(|error: RkyvError| {
+                        Errors::InvalidKeyShare(format!(
+                            "Failed to access archived key: {}",
+                            error
+                        ))
+                    })?;
 
                 deserialize::<FrostStoredKey, RkyvError>(archived).map_err(
                     |error: RkyvError| {

@@ -1,6 +1,6 @@
 // tests/helpers/vault.rs
 
-use mpc_signer_engine::secrets::vault::config::VaultConfig;
+use app::secrets::vault::config::VaultConfig;
 
 use crate::helpers::config::ClusterConfig;
 

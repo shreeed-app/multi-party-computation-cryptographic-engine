@@ -154,7 +154,7 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
     fn build_submit_requests(
         &self,
         batch: &[RoundMessage],
-    ) -> Vec<(usize, SubmitRoundRequest)> {
+    ) -> Result<Vec<(usize, SubmitRoundRequest)>, Errors> {
         let mut requests: Vec<(usize, SubmitRoundRequest)> = Vec::new();
 
         for message in batch {
@@ -173,17 +173,28 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
             for node_id in targets {
                 let node_index: usize = node_id as usize;
                 // Skip if the target node index is out of bounds — this can
-                // happen if a message is misrouted to a non-existent
+                // happen if a message is mis-routed to a non-existent
                 // participant, but we don't want to fail the entire batch in
                 // that case.
                 if node_index >= self.sessions.len() {
                     continue;
                 }
 
+                let session_identifier: String =
+                    match self.sessions.get(node_index) {
+                        Some(session_id) => session_id.clone(),
+                        None => {
+                            return Err(Errors::InvalidMessage(format!(
+                                "No session found for target node {}: {:?}",
+                                node_id, self.sessions
+                            )));
+                        },
+                    };
+
                 requests.push((
                     node_index,
                     SubmitRoundRequest {
-                        session_identifier: self.sessions[node_index].clone(),
+                        session_identifier,
                         round: message.round,
                         from: message.from,
                         to: message.to,
@@ -193,7 +204,7 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
             }
         }
 
-        requests
+        Ok(requests)
     }
 
     /// Submit a batch of round messages to the target nodes in parallel.
@@ -209,11 +220,13 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
         }
 
         let requests: Vec<(usize, SubmitRoundRequest)> =
-            self.build_submit_requests(&batch);
+            self.build_submit_requests(&batch)?;
 
-        join_all(requests.into_iter().map(
+        join_all(requests.into_iter().filter_map(
             |(index, request): (usize, SubmitRoundRequest)| {
-                self.nodes[index].submit_round(request)
+                self.nodes
+                    .get(index)
+                    .map(|node: &NodeIpcClient| node.submit_round(request))
             },
         ))
         .await
@@ -237,7 +250,7 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
     ///   messages and updated completion flags.
     async fn collect_round(
         &self,
-        all_done: &mut Vec<bool>,
+        all_done: &mut [bool],
     ) -> Result<VecDeque<RoundMessage>, Errors> {
         tracing::debug!("Collecting round messages from all nodes.");
 
@@ -251,15 +264,27 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
                         .iter()
                         .enumerate()
                         .filter(|(index, _): &(usize, &String)| {
-                            !all_done[*index]
+                            all_done
+                                .get(*index)
+                                .copied()
+                                .is_some_and(|done: bool| !done)
                         })
-                        .map(|(index, session_id): (usize, &String)| {
-                            let future: impl Future<
-                                Output = Result<CollectRoundResponse, Status>,
-                            > = self.nodes[index]
-                                .collect_round(session_id.clone());
-                            async move { (index, future.await) }
-                        }),
+                        .filter_map(
+                            |(index, session_id): (usize, &String)| {
+                                self.nodes.get(index).map(
+                                    |node: &NodeIpcClient| {
+                                        let future: impl Future<
+                                            Output = Result<
+                                                CollectRoundResponse,
+                                                Status,
+                                            >,
+                                        > = node
+                                            .collect_round(session_id.clone());
+                                        async move { (index, future.await) }
+                                    },
+                                )
+                            },
+                        ),
                 )
                 .await;
 
@@ -269,8 +294,10 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
                 let response: CollectRoundResponse =
                     result.map_err(map_status)?;
 
-                if response.done {
-                    all_done[index] = true;
+                if response.done
+                    && let Some(slot) = all_done.get_mut(index)
+                {
+                    *slot = true;
                 }
 
                 // Enqueue any messages returned by this node, tagging them
@@ -356,17 +383,20 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
             .sessions
             .iter()
             .enumerate()
-            .map(|(index, session_identifier): (usize, &String)| {
-                let node: &NodeIpcClient = &self.nodes[index];
+            .filter_map(|(index, session_identifier): (usize, &String)| {
                 // Finalize each session concurrently — since the controller
                 // runs the protocol synchronously, we can safely finalize all
                 // sessions at the same time without worrying about message
                 // routing or session state.
-                async move {
-                    node.finalize(session_identifier.clone())
-                        .await
-                        .map_err(map_status)
-                }
+                self.nodes.get(index).map(|node: &NodeIpcClient| {
+                    let session_identifier: String =
+                        session_identifier.clone();
+                    async move {
+                        node.finalize(session_identifier)
+                            .await
+                            .map_err(map_status)
+                    }
+                })
             })
             .collect();
 

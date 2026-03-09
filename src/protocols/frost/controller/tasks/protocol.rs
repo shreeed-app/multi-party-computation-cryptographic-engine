@@ -166,7 +166,7 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     /// # Arguments
     /// * `signing_package` (`&Self::SigningPackage`) - The signing package
     ///   that was signed by the participants, used for verification during
-    /// aggregation.
+    ///   aggregation.
     /// * `shares` (`&BTreeMap<Self::Identifier, Self::SignatureShare>`) - The
     ///   signature shares collected from all participants in round 1, mapped
     ///   by their identifiers.
@@ -489,7 +489,6 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
     /// * `Errors::InvalidMessage` - If the signing package cannot be encoded
     ///   or if any node call fails.
     async fn broadcast_signing_package(&mut self) -> Result<(), Errors> {
-        // Build the signing package from all collected commitments.
         let signing_package: C::SigningPackage =
             C::build_signing_package(self.commitments.clone(), &self.message)?;
 
@@ -498,46 +497,6 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
         })?;
 
         let mut futures: FuturesUnordered<
-            impl Future<Output = Result<(), Errors>>,
-        > = FuturesUnordered::new();
-
-        for (identifier, session_identifier) in self.sessions.clone() {
-            let node: NodeIpcClient = self.node_clone(identifier)?;
-            let payload: Vec<u8> = payload.clone();
-
-            futures.push(async move {
-                node.submit_round(SubmitRoundRequest {
-                    session_identifier,
-                    round: 1,
-                    from: None,
-                    to: Some(identifier),
-                    payload,
-                })
-                .await
-                .map_err(map_status)?;
-                Ok::<(), Errors>(())
-            });
-        }
-
-        while let Some(result) = futures.next().await {
-            result?;
-        }
-
-        Ok(())
-    }
-
-    /// Collect signature shares from all nodes in parallel after they have
-    /// received the signing package.
-    ///
-    /// Each node signs the package with its key share and returns a
-    /// `SignatureShare`. The controller stores these for aggregation.
-    ///
-    /// # Errors
-    /// * `Errors::InvalidMessage` - If a response cannot be decoded.
-    /// * `Errors::InvalidParticipant` - If a participant identifier is
-    ///   invalid.
-    async fn collect_signature_shares(&mut self) -> Result<(), Errors> {
-        let mut futures: FuturesUnordered<
             impl Future<
                 Output = Result<(C::Identifier, C::SignatureShare), Errors>,
             >,
@@ -545,17 +504,16 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
 
         for (identifier, session_identifier) in self.sessions.clone() {
             let node: NodeIpcClient = self.node_clone(identifier)?;
+            let payload: Vec<u8> = payload.clone();
 
             futures.push(async move {
-                // An empty submit_round triggers the node to finalize signing
-                // and return its signature share.
                 let response: SubmitRoundResponse = node
                     .submit_round(SubmitRoundRequest {
                         session_identifier,
-                        round: 2,
+                        round: 1,
                         from: None,
                         to: Some(identifier),
-                        payload: vec![],
+                        payload,
                     })
                     .await
                     .map_err(map_status)?;
@@ -566,10 +524,9 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
                         .first()
                         .ok_or_else(|| {
                             Errors::InvalidMessage(
-                                "Missing round 1 message in submit round \
-                                response."
-                                    .into(),
-                            )
+                            "Missing signature share in submit round response."
+                                .into(),
+                        )
                         })?
                         .payload,
                 )
@@ -682,7 +639,6 @@ impl<C: FrostControllerSigningCurve> Protocol for FrostControllerSigning<C> {
 
         self.collect_commitments().await?;
         self.broadcast_signing_package().await?;
-        self.collect_signature_shares().await?;
         self.aggregate()?;
 
         self.round = 2;

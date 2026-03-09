@@ -11,15 +11,19 @@ ignored = ["prost", "tonic-prost", "strum"]
 
 [workspace.metadata.dylint]
 libraries = [
-    { git = "https://github.com/shreeed-app/rust-security-lints", branch = "master", pattern = "rules/*" },
+    # { git = "https://github.com/shreeed-app/rust-security-lints", branch = "dev", pattern = "rules/*" },
     # For local development, you can use the path to the local copy of the 
     # repository instead of the git dependency.
-    # { path = "../rust-security-lints/rules/*" },
+    { path = "../rust-security-lints/rules/*" },
 ]
 
 [[bin]]
 name = "app"
 path = "src/main.rs"
+
+[lib]
+name = "app"
+path = "src/lib.rs"
 
 [features]
 default = []
@@ -63,7 +67,7 @@ strum_macros = "0.28.0"
 subtle = "2.6.1"
 thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros"] }
-toml = "1.0.3"
+toml = "1.0.6"
 tonic = "0.14.5"
 tonic-middleware = "0.4.1"
 tonic-prost = "0.14.5"

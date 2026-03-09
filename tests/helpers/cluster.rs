@@ -1,5 +1,4 @@
-use futures::future::join_all;
-use mpc_signer_engine::{
+use app::{
     config::{
         controller::{ControllerRuntimeConfig, NodeConfig},
         ipc::{AuthConfig, ControllerIpcConfig, NodeIpcConfig},
@@ -11,6 +10,7 @@ use mpc_signer_engine::{
         node::NodeRuntime,
     },
 };
+use futures::future::join_all;
 use tokio::{
     spawn,
     sync::{

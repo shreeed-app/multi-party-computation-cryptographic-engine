@@ -116,11 +116,11 @@ pub fn drive<M, O, E>(
                 // Flush all accumulated outgoing messages atomically before
                 // blocking — ensures the node receives the full batch for
                 // this round before we wait for the next incoming message.
-                if !pending.is_empty() {
-                    if outgoing.send(std::mem::take(&mut pending)).is_err() {
-                        tracing::debug!("Outgoing channel closed, aborting.");
-                        return None;
-                    }
+                if !pending.is_empty()
+                    && outgoing.send(std::mem::take(&mut pending)).is_err()
+                {
+                    tracing::debug!("Outgoing channel closed, aborting.");
+                    return None;
                 }
 
                 tracing::debug!("Waiting for incoming message.");
@@ -285,7 +285,7 @@ pub fn spawn_worker<P: CggmpProtocol>(worker: Worker<P>) {
                 tracing::debug!(active = *active, "Worker slot released.");
             },
             Err(poisoned) => {
-                let mut active = poisoned.into_inner();
+                let mut active: MutexGuard<'_, usize> = poisoned.into_inner();
                 *active = active.saturating_sub(1);
 
                 tracing::error!(
@@ -304,7 +304,7 @@ pub fn spawn_worker<P: CggmpProtocol>(worker: Worker<P>) {
 ///
 /// # Arguments
 /// * `worker` (`Worker<P>`) - the worker instance containing the protocol and
-///  channels.
+///   channels.
 fn run_worker<P: CggmpProtocol>(worker: Worker<P>) {
     tracing::debug!("Worker thread started, running protocol.");
 

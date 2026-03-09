@@ -2,8 +2,7 @@
 
 mod helpers;
 
-use helpers::cluster::start_cluster_once;
-use mpc_signer_engine::{
+use app::{
     auth::bearer_client::ClientAuthInterceptor,
     config::ipc::AuthConfig,
     proto::signer::v1::{
@@ -13,6 +12,7 @@ use mpc_signer_engine::{
     },
     protocols::algorithm::Algorithm,
 };
+use helpers::cluster::start_cluster_once;
 use tonic::transport::Channel;
 
 use crate::helpers::config::ClusterConfig;

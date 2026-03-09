@@ -70,7 +70,7 @@ impl FrostSigningCurve for FrostSchnorrSecp256k1SigningCurve {
     fn serialize_commitments(
         commitments: &Self::SigningCommitments,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(commitments).map(|v| v.to_vec()).map_err(
+        to_allocvec(commitments).map(|value: Vec<u8>| value.to_vec()).map_err(
             |error: PostcardError| {
                 Errors::InvalidMessage(format!(
                     "Failed to serialize secp256k1 commitments: {}",
@@ -118,7 +118,7 @@ impl FrostSigningCurve for FrostSchnorrSecp256k1SigningCurve {
     fn serialize_signature_share(
         share: &Self::SignatureShare,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(share).map(|v| v.to_vec()).map_err(
+        to_allocvec(share).map(|value: Vec<u8>| value.to_vec()).map_err(
             |error: PostcardError| {
                 Errors::InvalidMessage(format!(
                     "Failed to serialize secp256k1 signature share: {}",

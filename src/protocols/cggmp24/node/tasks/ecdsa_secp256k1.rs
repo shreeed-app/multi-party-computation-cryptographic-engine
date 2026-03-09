@@ -334,14 +334,14 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
     fn drain_pending(&mut self) -> Result<(), Errors> {
         while let Ok(batch) = self.outgoing_receiver.try_recv() {
             for outgoing in batch {
-                let msg = self.wrap_outgoing(outgoing)?;
-                self.pending_messages.push_back(msg);
+                let message: RoundMessage = self.wrap_outgoing(outgoing)?;
+                self.pending_messages.push_back(message);
             }
         }
-        if self.worker_done.is_none() {
-            if let Ok(done) = self.done_receiver.try_recv() {
-                self.worker_done = Some(done);
-            }
+        if self.worker_done.is_none()
+            && let Ok(done) = self.done_receiver.try_recv()
+        {
+            self.worker_done = Some(done);
         }
         Ok(())
     }
@@ -434,7 +434,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
             return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
-        let Cggmp24Wire::ProtocolMessage { payload } =
+        let Cggmp24Wire::ProtocolMessage { payload }: Cggmp24Wire =
             decode_wire(&round_message.payload)?;
 
         let message: CggmpSigningMessage =

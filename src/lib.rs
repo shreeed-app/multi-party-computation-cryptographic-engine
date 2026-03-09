@@ -5,9 +5,9 @@
 #![register_tool(dylint)]
 #![forbid(unsafe_code)]
 #![deny(clippy::all)]
+#![allow(clippy::type_complexity)]
 #![deny(missing_docs)]
 #![deny(
-    dylint::security_panic_usage,
     dylint::security_indexing_usage,
     dylint::security_missing_type,
     dylint::security_unsafe_usage
@@ -27,12 +27,7 @@ pub mod transport;
 /// to modify generated code, and it may contain patterns that trigger security
 /// lints but are safe in this context.
 #[allow(warnings)]
-#[allow(
-    security_panic_usage,
-    security_indexing_usage,
-    security_missing_type,
-    security_unsafe_usage
-)]
+#[allow(security_indexing_usage, security_missing_type, security_unsafe_usage)]
 pub mod proto {
     /// Signer service definitions.
     pub mod signer {

@@ -35,6 +35,7 @@
         "keepalive",
         "keygen",
         "miri",
+        "oneshot",
         "prehash",
         "prost",
         "protoc",

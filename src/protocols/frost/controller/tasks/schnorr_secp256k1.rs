@@ -14,12 +14,8 @@ use frost_secp256k1::{
 };
 use postcard::{Error as PostcardError, from_bytes, to_allocvec};
 
-use crate::{
-    protocols::algorithm::Algorithm,
-    transport::errors::Errors,
-};
-
 use super::protocol::{FrostControllerSigning, FrostControllerSigningCurve};
+use crate::{protocols::algorithm::Algorithm, transport::errors::Errors};
 
 /// Concrete type alias for FROST(schnorr-secp256k1) controller signing.
 pub type FrostSchnorrSecp256k1ControllerSigning =
@@ -28,7 +24,9 @@ pub type FrostSchnorrSecp256k1ControllerSigning =
 /// FROST(schnorr-secp256k1) curve descriptor for controller-side signing.
 pub struct FrostSchnorrSecp256k1ControllerSigningCurve;
 
-impl FrostControllerSigningCurve for FrostSchnorrSecp256k1ControllerSigningCurve {
+impl FrostControllerSigningCurve
+    for FrostSchnorrSecp256k1ControllerSigningCurve
+{
     type Identifier = Identifier;
     type SigningCommitments = SigningCommitments;
     type SigningPackage = SigningPackage;
@@ -81,14 +79,14 @@ impl FrostControllerSigningCurve for FrostSchnorrSecp256k1ControllerSigningCurve
     fn serialize_signing_package(
         package: &Self::SigningPackage,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package)
-            .map(|v| v.to_vec())
-            .map_err(|error: PostcardError| {
+        to_allocvec(package).map(|value: Vec<u8>| value.to_vec()).map_err(
+            |error: PostcardError| {
                 Errors::InvalidMessage(format!(
                     "Failed to serialize secp256k1 signing package: {}",
                     error
                 ))
-            })
+            },
+        )
     }
 
     fn deserialize_signature_share(
@@ -120,14 +118,13 @@ impl FrostControllerSigningCurve for FrostSchnorrSecp256k1ControllerSigningCurve
     fn serialize_signature(
         signature: &Self::Signature,
     ) -> Result<Vec<u8>, Errors> {
-        signature
-            .serialize()
-            .map(|bytes| bytes.to_vec())
-            .map_err(|error: Error| {
+        signature.serialize().map(|bytes: Vec<u8>| bytes.to_vec()).map_err(
+            |error: Error| {
                 Errors::InvalidSignature(format!(
                     "Failed to serialize secp256k1 signature: {}",
                     error
                 ))
-            })
+            },
+        )
     }
 }

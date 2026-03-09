@@ -11,7 +11,13 @@ use crate::{
             },
         },
         frost::{
-            controller::keys::FrostControllerKeyGeneration,
+            controller::{
+                keys::FrostControllerKeyGeneration,
+                tasks::{
+                    ed25519::FrostEd25519ControllerSigning,
+                    schnorr_secp256k1::FrostSchnorrSecp256k1ControllerSigning,
+                },
+            },
             node::{
                 keys::{
                     ed25519::FrostEd25519NodeKeyGeneration,
@@ -122,10 +128,30 @@ impl ProtocolFactory {
                     )),
                 },
 
-                SigningInit::Controller(_) => {
-                    Err(Errors::UnsupportedAlgorithm(
-                        "Controller signing not implemented.".into(),
-                    ))
+                SigningInit::Controller(init) => match init.common.algorithm {
+                    // Frost ed25519 node signing.
+                    Algorithm::FrostEd25519 => {
+                        Ok(Box::new(FrostEd25519ControllerSigning::try_new(
+                            ProtocolInit::Signing(SigningInit::Controller(
+                                init,
+                            )),
+                        )?))
+                    },
+                    // Frost schnorr secp256k1 node signing.
+                    Algorithm::FrostSchnorrSecp256k1 => Ok(Box::new(
+                        FrostSchnorrSecp256k1ControllerSigning::try_new(
+                            ProtocolInit::Signing(SigningInit::Controller(
+                                init,
+                            )),
+                        )?,
+                    )),
+                    // CGGMP-24 secp256k1 node signing.
+                    Algorithm::Cggmp24EcdsaSecp256k1 => {
+                        Err(Errors::UnsupportedAlgorithm(format!(
+                            "Controller signing protocol not implemented for algorithm: {:?}",
+                            Algorithm::Cggmp24EcdsaSecp256k1
+                        )))
+                    },
                 },
             },
         }

@@ -77,7 +77,7 @@ impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
     fn serialize_signing_package(
         package: &Self::SigningPackage,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package).map(|v| v.to_vec()).map_err(
+        to_allocvec(package).map(|value: Vec<u8>| value.to_vec()).map_err(
             |error: PostcardError| {
                 Errors::InvalidMessage(format!(
                     "Failed to serialize ed25519 signing package: {}",
@@ -116,7 +116,7 @@ impl FrostControllerSigningCurve for FrostEd25519ControllerSigningCurve {
     fn serialize_signature(
         signature: &Self::Signature,
     ) -> Result<Vec<u8>, Errors> {
-        signature.serialize().map(|bytes| bytes.to_vec()).map_err(
+        signature.serialize().map(|bytes: Vec<u8>| bytes.to_vec()).map_err(
             |error: Error| {
                 Errors::InvalidSignature(format!(
                     "Failed to serialize ed25519 signature: {}",

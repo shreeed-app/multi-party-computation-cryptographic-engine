@@ -190,11 +190,14 @@ impl EngineApi for NodeEngine {
         // Since the controller executes the protocol synchronously, we can
         // simply call `next_round()` until the protocol is done to collect all
         // produced messages for the current round.
-        loop {
-            match protocol.next_round().await? {
-                Some(message) => produced.push(message),
-                None => break,
-            }
+
+        while let Some(message) = protocol.next_round().await? {
+            tracing::debug!(
+                "Message produced for session {}: {:?}",
+                session_id,
+                message
+            );
+            produced.push(message);
         }
 
         entry.state.advance_round(round);
@@ -250,7 +253,7 @@ impl EngineApi for NodeEngine {
             // critical — holding the mutex while waiting would block
             // `submit_round` from delivering incoming messages to the worker,
             // which is the only thing that can unblock message production.
-            let (produced, done) = {
+            let (produced, done): (Vec<RoundMessage>, bool) = {
                 let mut entry: MutexGuard<'_, SessionEntry> =
                     entry.lock().await;
 
@@ -264,11 +267,13 @@ impl EngineApi for NodeEngine {
                 // (which was populated by `drain_pending` from the worker's
                 // outgoing channel). Loop until the queue is empty.
                 let mut produced: Vec<RoundMessage> = Vec::new();
-                loop {
-                    match protocol.next_round().await? {
-                        Some(message) => produced.push(message),
-                        None => break,
-                    }
+                while let Some(message) = protocol.next_round().await? {
+                    tracing::debug!(
+                        "Message produced for session {}: {:?}",
+                        session_id,
+                        message
+                    );
+                    produced.push(message);
                 }
 
                 (produced, protocol.is_done())

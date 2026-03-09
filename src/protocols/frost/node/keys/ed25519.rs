@@ -105,7 +105,7 @@ impl FrostCurve for FrostEd25519Curve {
     fn serialize_round1_package(
         package: &Self::Round1Package,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package).map(|v| v.to_vec()).map_err(
+        to_allocvec(package).map(|value: Vec<u8>| value.to_vec()).map_err(
             |error: PostcardError| {
                 Errors::InvalidMessage(format!(
                     "Failed to serialize round 1 package: {}",
@@ -129,7 +129,7 @@ impl FrostCurve for FrostEd25519Curve {
     fn serialize_round2_package(
         package: &Self::Round2Package,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package).map(|v| v.to_vec()).map_err(
+        to_allocvec(package).map(|value: Vec<u8>| value.to_vec()).map_err(
             |error: PostcardError| {
                 Errors::InvalidMessage(format!(
                     "Failed to serialize round 2 package: {}",
@@ -153,7 +153,7 @@ impl FrostCurve for FrostEd25519Curve {
     fn serialize_key_package(
         package: &Self::KeyPackage,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package).map(|v| v.to_vec()).map_err(
+        to_allocvec(package).map(|value: Vec<u8>| value.to_vec()).map_err(
             |error: PostcardError| {
                 Errors::InvalidMessage(format!(
                     "Failed to serialize key package: {}",
@@ -166,7 +166,7 @@ impl FrostCurve for FrostEd25519Curve {
     fn serialize_public_key_package(
         package: &Self::PublicKeyPackage,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package).map(|v| v.to_vec()).map_err(
+        to_allocvec(package).map(|value: Vec<u8>| value.to_vec()).map_err(
             |error: PostcardError| {
                 Errors::InvalidMessage(format!(
                     "Failed to serialize public key package: {}",

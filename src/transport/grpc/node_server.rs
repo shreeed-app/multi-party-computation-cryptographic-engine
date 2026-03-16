@@ -11,6 +11,7 @@ use crate::{
     proto::signer::v1::{
         AbortSessionRequest,
         AbortSessionResponse,
+        AuxiliaryGenerationResult,
         CollectRoundRequest,
         CollectRoundResponse,
         FinalizeSessionRequest,
@@ -18,6 +19,7 @@ use crate::{
         KeyGenerationResult,
         RoundMessage,
         SignatureResult,
+        StartAuxiliaryGenerationSessionRequest,
         StartKeyGenerationSessionRequest,
         StartSessionResponse,
         StartSigningSessionRequest,
@@ -29,9 +31,12 @@ use crate::{
     protocols::{
         algorithm::Algorithm,
         types::{
+            AuxiliaryGenerationInit,
+            DefaultAuxiliaryGenerationInit,
             DefaultKeyGenerationInit,
             DefaultSigningInit,
             KeyGenerationInit,
+            NodeAuxiliaryGenerationInit,
             NodeKeyGenerationInit,
             NodeSigningInit,
             ProtocolInit,
@@ -114,7 +119,17 @@ impl<
         let init: ProtocolInit =
             ProtocolInit::Signing(SigningInit::Node(NodeSigningInit {
                 common: DefaultSigningInit {
-                    key_identifier: request.key_identifier.clone(),
+                    // Extract the base key identifier by removing any
+                    // auxiliary identifier from the key identifier. This
+                    // assumes that auxiliary identifiers are appended to the
+                    // base key identifier with a '/' separator, e.g., "key/X".
+                    key_identifier: request
+                        .key_identifier
+                        .clone()
+                        .rsplit_once('/')
+                        .map(|(base, _): (&str, &str)| base)
+                        .unwrap_or(&request.key_identifier)
+                        .into(),
                     algorithm,
                     threshold: request.threshold,
                     participants: request.participants,
@@ -192,6 +207,69 @@ impl<
         Ok(Response::new(StartSessionResponse {
             session_identifier: session_identifier.to_string(),
             messages: round_message,
+        }))
+    }
+
+    /// Start a new auxiliary generation session.
+    ///
+    /// # Arguments
+    /// * `request` (`Request<StartAuxiliaryGenerationSessionRequest>`) -
+    ///   Incoming gRPC request.
+    ///
+    /// # Errors
+    /// * `Status` - If authentication fails or session creation fails.
+    ///
+    /// # Returns
+    /// * `Result<Response<StartSessionResponse>, Status>` - gRPC response or
+    ///   error.
+    #[instrument(skip(self, request), fields(
+        key_identifier = %request.get_ref().key_identifier,
+        session = Empty
+    ))]
+    async fn start_auxiliary_generation_session(
+        &self,
+        request: Request<StartAuxiliaryGenerationSessionRequest>,
+    ) -> Result<Response<StartSessionResponse>, Status> {
+        tracing::debug!(
+            "Starting auxiliary generation session for key {}.",
+            request.get_ref().key_identifier
+        );
+
+        let request: &StartAuxiliaryGenerationSessionRequest =
+            request.get_ref();
+
+        let algorithm: Algorithm = Algorithm::from_str(&request.algorithm)
+            .map_err(|error: ParseError| {
+                Errors::UnsupportedAlgorithm(error.to_string())
+            })?;
+
+        // Retrieve the incomplete key share from vault using the key
+        // identifier and the auxiliary identifier.
+        let vault_key: String =
+            format!("{}/{}", request.key_identifier, request.identifier);
+        let incomplete_key_share: KeyShare =
+            self.vault.get_key_share(&vault_key).await?;
+
+        let init: ProtocolInit = ProtocolInit::AuxiliaryGeneration(
+            AuxiliaryGenerationInit::Node(NodeAuxiliaryGenerationInit {
+                common: DefaultAuxiliaryGenerationInit {
+                    key_identifier: request.key_identifier.clone(),
+                    algorithm,
+                    participants: request.participants,
+                },
+                identifier: request.identifier,
+                incomplete_key_share,
+            }),
+        );
+
+        let (session_identifier, messages): (
+            SessionIdentifier,
+            Vec<RoundMessage>,
+        ) = self.engine.start_session(init).await?;
+
+        Ok(Response::new(StartSessionResponse {
+            session_identifier: session_identifier.to_string(),
+            messages,
         }))
     }
 
@@ -340,7 +418,7 @@ impl<
             } => {
                 // Ensure key share is present in the output.
                 let key_share: KeyShare = key_share.ok_or_else(|| {
-                    Errors::InvalidState("Missing key share in output".into())
+                    Errors::InvalidState("Missing key share in output.".into())
                 })?;
 
                 // Store key share in vault in a blocking task.
@@ -349,6 +427,30 @@ impl<
                 Ok(Response::new(FinalizeSessionResponse {
                     final_output: Some(FinalOutput::KeyGeneration(
                         KeyGenerationResult { public_key, public_key_package },
+                    )),
+                }))
+            },
+
+            // Auxiliary generation output: store key share in vault, and
+            // return success to the caller.
+            ProtocolOutput::AuxiliaryGeneration {
+                key_identifier,
+                key_share,
+            } => {
+                let key_share: KeyShare = key_share.ok_or_else(|| {
+                    Errors::InvalidState(
+                        "Missing key share in auxiliary generation output."
+                            .into(),
+                    )
+                })?;
+
+                // Erase the incomplete key share from vault, and store the
+                // complete key share under the same identifier.
+                self.vault.store_key_share(&key_identifier, key_share).await?;
+
+                Ok(Response::new(FinalizeSessionResponse {
+                    final_output: Some(FinalOutput::AuxiliaryGeneration(
+                        AuxiliaryGenerationResult {},
                     )),
                 }))
             },

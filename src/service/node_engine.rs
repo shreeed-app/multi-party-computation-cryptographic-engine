@@ -64,14 +64,11 @@ impl NodeEngine {
     ///   `Arc<Mutex<>>` for thread-safe access.
     async fn get_entry(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
     ) -> Result<Arc<Mutex<SessionEntry>>, Errors> {
-        self.live
-            .lock()
-            .await
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| Errors::SessionNotFound(session_id.to_string()))
+        self.live.lock().await.get(&session_identifier).cloned().ok_or_else(
+            || Errors::SessionNotFound(session_identifier.to_string()),
+        )
     }
 }
 
@@ -98,53 +95,43 @@ impl EngineApi for NodeEngine {
         &self,
         init: ProtocolInit,
     ) -> Result<(SessionIdentifier, Vec<RoundMessage>), Errors> {
-        tracing::debug!("Starting session with init: {:?}", init);
-
-        let session_id: SessionIdentifier = self.sessions.create();
+        let session_identifier: SessionIdentifier = self.sessions.create();
 
         let mut protocol: Box<dyn Protocol> = ProtocolFactory::create(init)
             .inspect_err(|error: &Errors| {
                 tracing::error!(
-                    "Failed to create protocol for session {}: {}",
-                    session_id,
+                    "Failed to create protocol instance for session {}: {}",
+                    session_identifier,
                     error
                 );
 
-                self.sessions.remove(session_id);
+                self.sessions.remove(session_identifier);
             })?;
 
-        // Wait for the first round message to be produced by the protocol.
-        // This ensures that the session is fully initialized before accepting
-        // any messages.
-        let first_round: RoundMessage = loop {
-            if let Some(message) = protocol.next_round().await? {
-                tracing::debug!(
-                    "First round message produced for session {}: {:?}",
-                    session_id,
-                    message
-                );
-
-                break message;
-            }
-            yield_now().await;
-        };
+        // Since the controller executes the protocol synchronously, we can
+        // call `next_round()` until the protocol is done to collect
+        // all produced messages for the first round before returning.
+        let mut messages: Vec<RoundMessage> = Vec::new();
+        while let Some(message) = protocol.next_round().await? {
+            messages.push(message);
+        }
 
         self.live.lock().await.insert(
-            session_id,
+            session_identifier,
             Arc::new(Mutex::new(SessionEntry {
                 state: SessionState::Initialized,
                 protocol: Some(protocol),
             })),
         );
 
-        Ok((session_id, vec![first_round]))
+        Ok((session_identifier, messages))
     }
 
     /// Submit a round message to the session.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Identifier of the session to which the
-    ///   message belongs.
+    /// * `session_identifier` (`SessionIdentifier`) - Identifier of the
+    ///   session to which the message belongs.
     /// * `message` (`RoundMessage`) - Message received from another node.
     ///
     /// # Errors
@@ -154,20 +141,20 @@ impl EngineApi for NodeEngine {
     /// # Returns
     /// * `Vec<RoundMessage>` - Messages to broadcast for the next round after
     ///   processing the submitted message.
-    #[instrument(skip(self, message), fields(session_id = %session_id))]
+    #[instrument(skip(self, message), fields(session_identifier = %session_identifier))]
     async fn submit_round(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
         message: proto::RoundMessage,
     ) -> Result<Vec<RoundMessage>, Errors> {
         tracing::debug!(
             "Submitting round message for session {}: {:?}",
-            session_id,
+            session_identifier,
             message
         );
 
         let entry: Arc<Mutex<SessionEntry>> =
-            self.get_entry(session_id).await?;
+            self.get_entry(session_identifier).await?;
         let mut entry: MutexGuard<'_, SessionEntry> = entry.lock().await;
 
         let protocol: &mut Box<dyn Protocol + 'static> = entry
@@ -181,7 +168,7 @@ impl EngineApi for NodeEngine {
         if let Some(message) = protocol.handle_message(message).await? {
             tracing::debug!(
                 "Message produced after handling round message for session {}: {:?}",
-                session_id,
+                session_identifier,
                 message
             );
             produced.push(message);
@@ -194,7 +181,7 @@ impl EngineApi for NodeEngine {
         while let Some(message) = protocol.next_round().await? {
             tracing::debug!(
                 "Message produced for session {}: {:?}",
-                session_id,
+                session_identifier,
                 message
             );
             produced.push(message);
@@ -224,7 +211,8 @@ impl EngineApi for NodeEngine {
     /// the worker, deadlocking the protocol.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Target session identifier.
+    /// * `session_identifier` (`SessionIdentifier`) - Target session
+    ///   identifier.
     ///
     /// # Errors
     /// * `Errors::SessionNotFound` if the session does not exist.
@@ -234,18 +222,18 @@ impl EngineApi for NodeEngine {
     /// # Returns
     /// * `(Vec<RoundMessage>, bool)` - Outgoing messages produced for this
     ///   round, and a boolean indicating whether the protocol is complete.
-    #[instrument(skip(self), fields(session_id = %session_id))]
+    #[instrument(skip(self), fields(session_identifier = %session_identifier))]
     async fn collect_round(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
     ) -> Result<(Vec<proto::RoundMessage>, bool), Errors> {
         tracing::debug!(
             "Collecting round messages for session {}.",
-            session_id
+            session_identifier
         );
 
         let entry: Arc<Mutex<SessionEntry>> =
-            self.get_entry(session_id).await?;
+            self.get_entry(session_identifier).await?;
 
         loop {
             // Acquire the mutex, drain all messages the worker has produced so
@@ -270,7 +258,7 @@ impl EngineApi for NodeEngine {
                 while let Some(message) = protocol.next_round().await? {
                     tracing::debug!(
                         "Message produced for session {}: {:?}",
-                        session_id,
+                        session_identifier,
                         message
                     );
                     produced.push(message);
@@ -282,7 +270,7 @@ impl EngineApi for NodeEngine {
             if !produced.is_empty() || done {
                 tracing::debug!(
                     "Collected round messages for session {}: {:?}",
-                    session_id,
+                    session_identifier,
                     produced
                 );
 
@@ -300,8 +288,8 @@ impl EngineApi for NodeEngine {
     /// Collect round messages from all participants for the current round.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Identifier of the session for which to
-    ///   collect messages.
+    /// * `session_identifier` (`SessionIdentifier`) - Identifier of the
+    ///   session for which to collect messages.
     ///
     /// # Errors
     /// * `Errors::InvalidState` if the session is not in a valid state to
@@ -309,22 +297,22 @@ impl EngineApi for NodeEngine {
     ///
     /// # Returns
     /// * `ProtocolOutput` - Collected messages for the current round.
-    #[instrument(skip(self), fields(session_id = %session_id))]
+    #[instrument(skip(self), fields(session_identifier = %session_identifier))]
     async fn finalize(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
     ) -> Result<ProtocolOutput, Errors> {
-        tracing::debug!("Finalizing session {}.", session_id);
+        tracing::debug!("Finalizing session {}.", session_identifier);
 
         self.sessions
-            .with_session(session_id, |state: &mut SessionState| {
+            .with_session(session_identifier, |state: &mut SessionState| {
                 state.finalize()
             })?;
 
         let entry: Arc<Mutex<SessionEntry>> = {
-            self.live.lock().await.remove(&session_id).ok_or_else(|| {
-                Errors::SessionNotFound(session_id.to_string())
-            })?
+            self.live.lock().await.remove(&session_identifier).ok_or_else(
+                || Errors::SessionNotFound(session_identifier.to_string()),
+            )?
         };
 
         let mut entry: MutexGuard<'_, SessionEntry> = entry.lock().await;
@@ -339,8 +327,8 @@ impl EngineApi for NodeEngine {
     /// Start a distributed signing session.
     ///
     /// # Arguments
-    /// * `request` (`GenerateKeyRequest`) - The request containing signing
-    ///   parameters.
+    /// * `session_identifier` (`SessionIdentifier`) - Identifier of the
+    ///   session to abort.
     ///
     /// # Errors
     /// * `Status` - If the algorithm is unsupported, protocol initialization
@@ -348,15 +336,15 @@ impl EngineApi for NodeEngine {
     ///
     /// # Returns
     /// * `GenerateKeyResponse` - The response containing the generated key.
-    #[instrument(skip(self), fields(session_id = %session_id))]
+    #[instrument(skip(self), fields(session_identifier = %session_identifier))]
     async fn abort(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
     ) -> Result<(), Errors> {
-        tracing::debug!("Aborting session {}.", session_id);
+        tracing::debug!("Aborting session {}.", session_identifier);
 
         self.sessions.with_session(
-            session_id,
+            session_identifier,
             |state: &mut SessionState| {
                 state.abort();
                 Ok(())
@@ -364,7 +352,7 @@ impl EngineApi for NodeEngine {
         )?;
 
         let entry: Option<Arc<Mutex<SessionEntry>>> =
-            self.live.lock().await.remove(&session_id);
+            self.live.lock().await.remove(&session_identifier);
 
         if let Some(entry) = entry {
             let mut entry: MutexGuard<'_, SessionEntry> = entry.lock().await;

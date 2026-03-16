@@ -99,17 +99,14 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
             ProtocolInit::KeyGeneration(KeyGenerationInit::Node(init)) => init,
             _ => {
                 return Err(Errors::InvalidProtocolInit(
-                    "Expected NodeKeyGenerationInit struct.".into(),
+                    "Invalid protocol initialization context for CGGMP24 \
+                    node key generation."
+                        .into(),
                 ));
             },
         };
 
-        if init.common.algorithm != Algorithm::Cggmp24EcdsaSecp256k1 {
-            return Err(Errors::UnsupportedAlgorithm(
-                init.common.algorithm.as_str().into(),
-            ));
-        }
-
+        // Convert identifiers to u16 — required by the CGGMP24 state machine.
         let identifier: u16 =
             init.identifier.try_into().map_err(|error: TryFromIntError| {
                 Errors::InvalidProtocolInit(error.to_string())
@@ -128,28 +125,42 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
             },
         )?;
 
-        let execution_id_bytes: Vec<u8> =
+        // Use the key identifier as the execution identifier — unique per key
+        // generation session, scoped to avoid collision with auxiliary
+        // generation and signing executions via their own prefixes.
+        let execution_identifier_bytes: Vec<u8> =
             init.common.key_identifier.clone().into_bytes();
 
+        // Channel pair for delivering incoming protocol messages to the
+        // worker.
         let (incoming_transmitter, incoming_receiver): (
             Sender<Incoming<CggmpKeyGenerationMessage>>,
             Receiver<Incoming<CggmpKeyGenerationMessage>>,
         ) = unbounded();
+
+        // Channel pair for receiving outgoing protocol message batches from
+        // the worker.
         let (outgoing_transmitter, outgoing_receiver): (
             Sender<Vec<Outgoing<CggmpKeyGenerationMessage>>>,
             Receiver<Vec<Outgoing<CggmpKeyGenerationMessage>>>,
         ) = unbounded();
+
+        // Bounded channel for receiving the worker completion signal —
+        // capacity of 1 since the worker sends exactly one done signal
+        // at the end.
         let (done_transmitter, done_receiver): (
             Sender<KeyGenerationWorkerDone>,
             Receiver<KeyGenerationWorkerDone>,
         ) = bounded(1);
 
+        // Spawn the worker thread — it will drive the CGGMP24 state machine
+        // to completion and signal via done_transmitter when finished.
         spawn_worker(Worker {
             protocol: KeyGenerationProtocol {
                 identifier,
                 participants: participants_u16,
                 threshold: threshold_u16,
-                execution_id_bytes,
+                execution_identifier_bytes,
             },
             incoming_receiver,
             outgoing_transmitter,
@@ -185,17 +196,23 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     ///   queued, or an Err if there is an error in receiving messages or the
     ///   completion signal.
     fn drain_pending(&mut self) -> Result<(), Errors> {
+        // Drain all outgoing message batches produced by the worker since the
+        // last call — each batch corresponds to one state machine step.
         while let Ok(batch) = self.outgoing_receiver.try_recv() {
             for outgoing in batch {
                 let message: RoundMessage = self.wrap_outgoing(outgoing)?;
                 self.pending_messages.push_back(message);
             }
         }
+
+        // Capture the worker completion signal if not already received —
+        // try_recv avoids blocking since the worker may still be running.
         if self.worker_done.is_none()
             && let Ok(done) = self.done_receiver.try_recv()
         {
             self.worker_done = Some(done);
         }
+
         Ok(())
     }
 
@@ -220,19 +237,23 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
         &mut self,
         outgoing: Outgoing<CggmpKeyGenerationMessage>,
     ) -> Result<RoundMessage, Errors> {
-        let inner: Vec<u8> =
-            to_vec(&outgoing.msg).map_err(|error: Error| {
+        // Serialize the CGGMP24 message and wrap it in the wire envelope.
+        let payload: Vec<u8> = encode_wire(&Cggmp24Wire::ProtocolMessage {
+            payload: to_vec(&outgoing.msg).map_err(|error: Error| {
                 Errors::InvalidMessage(error.to_string())
-            })?;
+            })?,
+        })?;
 
-        let payload: Vec<u8> =
-            encode_wire(&Cggmp24Wire::ProtocolMessage { payload: inner })?;
-
+        // Resolve the recipient — P2P messages carry a specific target,
+        // broadcast messages are sent to all parties.
         let to: Option<u32> = match outgoing.recipient {
             MessageDestination::OneParty(party) => Some(u32::from(party)),
             MessageDestination::AllParties => None,
         };
 
+        // Assign a monotonic transport-level identifier — this is NOT a
+        // CGGMP24 protocol round. Real rounds are encoded inside the
+        // message payload by the state machine.
         let round: u32 = self.message_identifier as Round;
         self.message_identifier = self.message_identifier.saturating_add(1);
 
@@ -267,6 +288,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
         &mut self,
         message: RoundMessage,
     ) -> Result<Option<RoundMessage>, Errors> {
+        // Unwrap the wire envelope and deserialize the CGGMP24 message.
         let Cggmp24Wire::ProtocolMessage { payload }: Cggmp24Wire =
             decode_wire(&message.payload)?;
 
@@ -275,6 +297,8 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                 Errors::InvalidMessage(error.to_string())
             })?;
 
+        // Resolve the sender identifier and message type for the state
+        // machine.
         let sender: u16 = message
             .from
             .ok_or(Errors::InvalidMessage("Missing sender.".into()))?
@@ -283,10 +307,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                 Errors::InvalidMessage(error.to_string())
             })?;
 
-        // Send the incoming message to the protocol worker, which will process
-        // it and generate any outgoing messages in response. The worker will
-        // also update the protocol state and eventually produce a completion
-        // signal when the protocol is done.
+        // Deliver the message to the worker — P2P if a recipient is set,
+        // broadcast otherwise. The worker will process it, advance the state
+        // machine, and produce outgoing messages or a completion signal.
         self.incoming_transmitter
             .send(Incoming {
                 id: message.round as MsgId,
@@ -312,6 +335,8 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
             return Err(Errors::Aborted("Protocol aborted.".into()));
         }
 
+        // Drain any outgoing messages or completion signals produced by the
+        // worker asynchronously since the last call.
         self.drain_pending()?;
 
         Ok(self.pending_messages.pop_front())
@@ -338,27 +363,32 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
             return Err(Errors::Aborted("Protocol aborted.".into()));
         }
 
-        // Ensure that all pending messages are processed and the completion
-        // signal from the worker is received before finalizing the protocol
-        // and producing the output.
+        // Use the cached completion signal if already received during
+        // drain_pending, otherwise block until the worker finishes.
         let done: WorkerDone<CggmpKeyGenerationOutput> =
-            if let Some(done) = self.worker_done.take() {
-                done
-            } else {
-                self.done_receiver.recv().map_err(|error: RecvError| {
-                    Errors::InvalidKeyShare(format!(
-                        "Failed to finalize protocol: {}",
-                        error
-                    ))
-                })?
-            };
+            self.worker_done.take().map_or_else(
+                || {
+                    self.done_receiver.recv().map_err(|error: RecvError| {
+                        Errors::InvalidKeyShare(format!(
+                            "Failed to finalize protocol: {}",
+                            error
+                        ))
+                    })
+                },
+                Ok,
+            )?;
 
         match done {
             KeyGenerationWorkerDone::Ok(incomplete_key_share) => {
+                // Serialize the incomplete key share to JSON for storage —
+                // combined with AuxInfo during aux gen to produce a full
+                // KeyShare.
                 let json: Vec<u8> = to_vec(&incomplete_key_share).map_err(
                     |error: Error| Errors::InvalidKeyShare(error.to_string()),
                 )?;
 
+                // Wrap the JSON blob in a Cggmp24StoredKey and serialize to
+                // rkyv bytes for Vault storage.
                 let stored: Cggmp24StoredKey = Cggmp24StoredKey {
                     identifier: self.identifier_u32 as u16,
                     key_share_json: json,
@@ -370,16 +400,25 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                     })?
                     .into_vec();
 
+                // Extract the compressed SEC1-encoded public key bytes.
                 let public_key: Vec<u8> = incomplete_key_share
                     .shared_public_key
                     .to_bytes(true)
                     .as_ref()
                     .to_vec();
 
+                // Scope the key share under "<key_id>/<participant_id>" to
+                // avoid Vault collisions across participants.
                 Ok(ProtocolOutput::KeyGeneration {
-                    key_identifier: self.key_identifier.clone(),
+                    key_identifier: format!(
+                        "{}/{}",
+                        self.key_identifier, self.identifier_u32
+                    ),
                     key_share: Some(Secret::new(blob)),
                     public_key,
+                    // Re-serialize the incomplete key share as the public key
+                    // package — used by the controller to verify consistency
+                    // across nodes.
                     public_key_package: to_vec(&incomplete_key_share)
                         .map_err(|error: Error| {
                             Errors::InvalidKeyShare(error.to_string())
@@ -387,7 +426,7 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
                 })
             },
 
-            KeyGenerationWorkerDone::Err => {
+            KeyGenerationWorkerDone::Failed => {
                 Err(Errors::InvalidKeyShare("Protocol worker failed.".into()))
             },
         }

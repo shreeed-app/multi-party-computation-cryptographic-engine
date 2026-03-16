@@ -10,19 +10,22 @@ pub trait VaultProvider: Send + Sync + 'static {
     /// Retrieve a key share by its identifier.
     ///
     /// # Arguments
-    /// * `key_id` (`&str`) - Identifier of the key share.
+    /// * `key_identifier` (`&str`) - Identifier of the key share.
     ///
     /// # Errors
     /// * `Errors` - If retrieval fails.
     ///
     /// # Returns
     /// * `KeyShare` - Opaque key share bytes.
-    async fn get_key_share(&self, key_id: &str) -> Result<KeyShare, Errors>;
+    async fn get_key_share(
+        &self,
+        key_identifier: &str,
+    ) -> Result<KeyShare, Errors>;
 
     /// Store a key share by its identifier.
     ///
     /// # Arguments
-    /// * `key_id` (`&str`) - Identifier of the key share.
+    /// * `key_identifier` (`&str`) - Identifier of the key share.
     /// * `key_share` (`&KeyShare`) - Opaque key share bytes.
     ///
     /// # Errors
@@ -32,7 +35,7 @@ pub trait VaultProvider: Send + Sync + 'static {
     /// * `()` - Empty result on success.
     async fn store_key_share(
         &self,
-        key_id: &str,
+        key_identifier: &str,
         key_share: KeyShare,
     ) -> Result<(), Errors>;
 }

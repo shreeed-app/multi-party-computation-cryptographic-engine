@@ -1,4 +1,9 @@
-//! CGGMP24 controller-side key generation protocol implementation.
+//! CGGMP24 ECDSA Secp256k1 controller-side auxiliary info generation protocol.
+//!
+//! Orchestrates the aux gen session lifecycle across all participant nodes:
+//! starts sessions in parallel (each node generates Paillier primes
+//! concurrently), routes messages across rounds, and finalizes all sessions
+//! to produce complete key shares in Vault.
 
 use std::collections::VecDeque;
 
@@ -12,7 +17,7 @@ use crate::{
         CollectRoundResponse,
         FinalizeSessionResponse,
         RoundMessage,
-        StartKeyGenerationSessionRequest,
+        StartAuxiliaryGenerationSessionRequest,
         StartSessionResponse,
         SubmitRoundRequest,
         SubmitRoundResponse,
@@ -22,8 +27,8 @@ use crate::{
         algorithm::Algorithm,
         protocol::Protocol,
         types::{
-            ControllerKeyGenerationInit,
-            KeyGenerationInit,
+            AuxiliaryGenerationInit,
+            ControllerAuxiliaryGenerationInit,
             ProtocolInit,
             ProtocolOutput,
             Round,
@@ -35,19 +40,17 @@ use crate::{
     },
 };
 
-/// CGGMP24 ECDSA Secp256k1 controller-side key generation protocol.
+/// CGGMP24 ECDSA Secp256k1 controller-side auxiliary info generation protocol.
 ///
-/// Drives the full DKG session lifecycle: starts sessions on all nodes in
-/// parallel, routes messages between participants across rounds, and finalizes
-/// all sessions once every worker signals completion.
-pub struct Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
+/// Drives the full aux gen session lifecycle: starts sessions on all nodes in
+/// parallel (allowing concurrent Paillier prime generation), routes messages
+/// between participants across rounds, and finalizes all sessions once every
+/// worker signals completion.
+pub struct Cggmp24EcdsaSecp256k1ControllerAuxiliaryGeneration {
     /// Algorithm identifier for this protocol instance.
     algorithm: Algorithm,
-    /// Unique identifier for the key being generated — used to scope Vault
-    /// paths and associate output with the correct key.
+    /// Unique identifier for the key whose aux info is being generated.
     key_identifier: String,
-    /// Threshold number of participants required to complete the protocol.
-    threshold: u32,
     /// Total number of participants in the protocol.
     participants: u32,
     /// gRPC clients for communicating with participant nodes, indexed by
@@ -66,13 +69,13 @@ pub struct Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
     aborted: bool,
 }
 
-impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
+impl Cggmp24EcdsaSecp256k1ControllerAuxiliaryGeneration {
     /// Construct a new instance from the provided protocol initialization
     /// context.
     ///
     /// # Arguments
     /// * `protocol_init` (`ProtocolInit`) - Initialization context, must be
-    ///   `KeyGeneration(Controller(...))`.
+    ///   `AuxiliaryGeneration(Controller(...))`.
     ///
     /// # Errors
     /// * `Errors::InvalidProtocolInit` - If the variant does not match.
@@ -80,14 +83,14 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
     /// # Returns
     /// * `Self` - Initialized instance ready to run.
     pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
-        let init: ControllerKeyGenerationInit = match protocol_init {
-            ProtocolInit::KeyGeneration(KeyGenerationInit::Controller(
-                init,
-            )) => init,
+        let init: ControllerAuxiliaryGenerationInit = match protocol_init {
+            ProtocolInit::AuxiliaryGeneration(
+                AuxiliaryGenerationInit::Controller(init),
+            ) => init,
             _ => {
                 return Err(Errors::InvalidProtocolInit(
                     "Invalid protocol initialization context for CGGMP24 \
-                    controller key generation."
+                    auxiliary key generation."
                         .into(),
                 ));
             },
@@ -96,21 +99,21 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
         Ok(Self {
             algorithm: init.common.algorithm,
             key_identifier: init.common.key_identifier,
-            threshold: init.common.threshold,
             participants: init.common.participants,
             nodes: init.nodes,
             sessions: Vec::new(),
-            round: 0,
             output: None,
+            round: 0,
             aborted: false,
         })
     }
 
-    /// Start key generation sessions on all nodes in parallel and collect
-    /// the initial outgoing messages from each.
+    /// Start auxiliary generation sessions on all nodes in parallel and
+    /// collect the initial outgoing messages from each.
     ///
-    /// Each node receives its participant index as `identifier` so it can
-    /// scope its key share in Vault under `<key_id>/<identifier>`.
+    /// Sessions are started concurrently so that each node generates its
+    /// Paillier primes simultaneously — reduces total wall time from
+    /// O(n * prime_gen) to O(prime_gen).
     ///
     /// # Errors
     /// * `Errors::Generic` - If any gRPC session start request fails.
@@ -120,26 +123,28 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
     async fn start_sessions(
         &mut self,
     ) -> Result<VecDeque<RoundMessage>, Errors> {
-        tracing::debug!("Starting key generation sessions on all nodes.");
+        tracing::debug!(
+            "Starting auxiliary generation sessions on all nodes in parallel."
+        );
 
-        // Start all sessions in parallel — avoids sequential latency for
-        // n nodes.
         let futures: impl Iterator<
             Item = impl Future<
                 Output = (usize, Result<StartSessionResponse, Status>),
             >,
         > = self.nodes.iter().enumerate().map(
             |(index, node): (usize, &NodeIpcClient)| {
-                let request: StartKeyGenerationSessionRequest = StartKeyGenerationSessionRequest {
-                    key_identifier: self.key_identifier.clone(),
-                    algorithm: self.algorithm.as_str().to_string(),
-                    threshold: self.threshold,
-                participants: self.participants,
-                identifier: index as u32,
-            };
-            async move { (index, node.start_key_generation(request).await) }
-        },
-    );
+                let request: StartAuxiliaryGenerationSessionRequest =
+                    StartAuxiliaryGenerationSessionRequest {
+                        key_identifier: self.key_identifier.clone(),
+                        algorithm: self.algorithm.as_str().to_string(),
+                        participants: self.participants,
+                        identifier: index as u32,
+                    };
+                async move {
+                    (index, node.start_auxiliary_generation(request).await)
+                }
+            },
+        );
 
         let mut responses: Vec<(usize, Result<StartSessionResponse, Status>)> =
             join_all(futures).await;
@@ -191,6 +196,7 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
     ) -> Result<Vec<(usize, SubmitRoundRequest)>, Errors> {
         batch
             .iter()
+            // Skip messages with no sender — cannot route without origin.
             .filter_map(|message: &RoundMessage| {
                 message.from.map(|from: u32| (from, message))
             })
@@ -204,9 +210,10 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
                         .filter(|identifier: &u32| *identifier != from)
                         .collect(),
                 };
-                targets.into_iter().map(move |node_identifier: u32| {
-                    (node_identifier, message)
-                })
+
+                targets
+                    .into_iter()
+                    .map(move |identifier: u32| (identifier, message))
             })
             .map(|(node_identifier, message): (u32, &RoundMessage)| {
                 let node_index: usize = node_identifier as usize;
@@ -286,9 +293,6 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
         let mut queue: VecDeque<RoundMessage> = VecDeque::new();
 
         loop {
-            // Poll all nodes in parallel — avoids sequential latency and
-            // ensures timely collection of messages as soon as
-            // they're produced.
             let responses: Vec<(usize, Result<CollectRoundResponse, Status>)> =
                 join_all(
                     self.sessions
@@ -351,6 +355,63 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
         Ok(queue)
     }
 
+    /// Finalize all node sessions in parallel and verify that all nodes
+    /// completed aux gen successfully.
+    ///
+    /// Unlike keygen, aux gen produces no public output — all key material
+    /// is stored privately in Vault by each node. This method simply verifies
+    /// that all sessions completed with the expected output variant.
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` - If any node returns an unexpected output
+    ///   variant or no output is received.
+    ///
+    /// # Returns
+    /// * `ProtocolOutput::AuxiliaryGeneration` - Completion signal with the
+    ///   scoped key identifier.
+    async fn finalize_all(&mut self) -> Result<ProtocolOutput, Errors> {
+        tracing::debug!("Finalizing all auxiliary generation sessions.");
+
+        let responses: Vec<FinalizeSessionResponse> =
+            join_all(self.sessions.iter().enumerate().filter_map(
+                |(index, session_identifier): (usize, &String)| {
+                    self.nodes.get(index).map(|node: &NodeIpcClient| {
+                        let session_identifier: String =
+                            session_identifier.clone();
+                        async move {
+                            node.finalize(session_identifier)
+                                .await
+                                .map_err(map_status)
+                        }
+                    })
+                },
+            ))
+            .await
+            .into_iter()
+            .collect::<Result<Vec<FinalizeSessionResponse>, Errors>>()?;
+
+        // Verify all nodes returned the expected AuxiliaryGeneration output —
+        // key material is stored in Vault by each node, so no public output
+        // needs to be extracted here.
+        responses.into_iter().try_for_each(
+            |response: FinalizeSessionResponse| match response.final_output {
+                Some(FinalOutput::AuxiliaryGeneration(_)) => Ok(()),
+                Some(other) => Err(Errors::InvalidMessage(format!(
+                    "Unexpected finalize output variant: {:?}",
+                    other
+                ))),
+                None => Err(Errors::InvalidMessage(
+                    "Node returned empty finalize output.".into(),
+                )),
+            },
+        )?;
+
+        Ok(ProtocolOutput::AuxiliaryGeneration {
+            key_identifier: self.key_identifier.clone(),
+            key_share: None,
+        })
+    }
+
     /// Drive the full protocol execution loop until all nodes complete.
     ///
     /// Starts all sessions, then alternates between submitting outgoing
@@ -361,7 +422,7 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
     /// * Any error propagated from `start_sessions`, `submit_batch`,
     ///   `collect_round`, or `finalize_all`.
     async fn run_protocol(&mut self) -> Result<(), Errors> {
-        tracing::debug!("Starting key generation protocol execution.");
+        tracing::debug!("Starting auxiliary generation protocol execution.");
 
         let mut queue: VecDeque<RoundMessage> = self.start_sessions().await?;
         let mut all_done: Vec<bool> = vec![false; self.nodes.len()];
@@ -386,78 +447,17 @@ impl Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
 
         Ok(())
     }
-
-    /// Finalize all node sessions in parallel and extract the key generation
-    /// output.
-    ///
-    /// All nodes produce consistent outputs — only the first is used since
-    /// public key and public key package are identical across participants.
-    ///
-    /// # Errors
-    /// * `Errors::InvalidMessage` - If any node returns an unexpected output
-    ///   variant or no output is received.
-    ///
-    /// # Returns
-    /// * `ProtocolOutput` - Key generation output containing the public key
-    ///   and public key package.
-    async fn finalize_all(&mut self) -> Result<ProtocolOutput, Errors> {
-        tracing::debug!("Finalizing all sessions and collecting output.");
-
-        let responses: Vec<FinalizeSessionResponse> =
-            join_all(self.sessions.iter().enumerate().filter_map(
-                |(index, session_identifier): (usize, &String)| {
-                    self.nodes.get(index).map(|node: &NodeIpcClient| {
-                        let session_identifier: String =
-                            session_identifier.clone();
-
-                        async move {
-                            node.finalize(session_identifier)
-                                .await
-                                .map_err(map_status)
-                        }
-                    })
-                },
-            ))
-            .await
-            .into_iter()
-            .collect::<Result<_, _>>()?;
-
-        // Extract the first valid output — all nodes produce the same public
-        // key and public key package so subsequent results are redundant.
-        let final_output: FinalOutput = responses
-            .into_iter()
-            .find_map(|response: FinalizeSessionResponse| {
-                response.final_output
-            })
-            .ok_or_else(|| {
-                Errors::InvalidMessage("No finalize output received.".into())
-            })?;
-
-        match final_output {
-            FinalOutput::KeyGeneration(result) => {
-                Ok(ProtocolOutput::KeyGeneration {
-                    key_identifier: self.key_identifier.clone(),
-                    key_share: None,
-                    public_key: result.public_key,
-                    public_key_package: result.public_key_package,
-                })
-            },
-            other => Err(Errors::InvalidMessage(format!(
-                "Unexpected finalize output variant: {:?}",
-                other
-            ))),
-        }
-    }
 }
 
 #[async_trait]
-impl Protocol for Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
+impl Protocol for Cggmp24EcdsaSecp256k1ControllerAuxiliaryGeneration {
     fn algorithm(&self) -> Algorithm {
         self.algorithm
     }
 
     fn threshold(&self) -> u32 {
-        self.threshold
+        // Aux gen requires all participants — threshold equals participants.
+        self.participants
     }
 
     fn participants(&self) -> u32 {
@@ -509,8 +509,8 @@ impl Protocol for Cggmp24EcdsaSecp256k1ControllerKeyGeneration {
     /// * `Errors::InvalidState` - If called before `next_round` has completed.
     ///
     /// # Returns
-    /// * `ProtocolOutput` - Key generation output containing the public key
-    ///   and public key package.
+    /// * `ProtocolOutput::AuxiliaryGeneration` - Completion signal with the
+    ///   scoped key identifier.
     async fn finalize(&mut self) -> Result<ProtocolOutput, Errors> {
         self.output.take().ok_or_else(|| {
             Errors::InvalidState(

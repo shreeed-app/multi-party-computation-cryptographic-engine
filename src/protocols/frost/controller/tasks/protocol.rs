@@ -10,7 +10,19 @@ use std::{
 };
 
 use async_trait::async_trait;
+use frost_core::{
+    Ciphersuite,
+    Error,
+    Identifier as FrostIdentifier,
+    Signature as FrostSignature,
+    SigningPackage as FrostSigningPackage,
+    aggregate,
+    keys::PublicKeyPackage as FrostPublicKeyPackage,
+    round1::SigningCommitments as FrostSigningCommitments,
+    round2::SignatureShare as FrostSignatureShare,
+};
 use futures::stream::{FuturesUnordered, StreamExt};
+use postcard::{Error as PostcardError, from_bytes, to_allocvec};
 
 use crate::{
     proto::signer::v1::{
@@ -44,24 +56,8 @@ use crate::{
 /// Implement this trait for each curve (ed25519, secp256k1) to plug into
 /// the generic `FrostControllerSigning` implementation.
 pub trait FrostControllerSigningCurve: Send + Sync + 'static {
-    /// Curve-specific FROST identifier type.
-    type Identifier: Ord + Copy + Send + Sync + 'static;
-    /// Signing commitments produced by each participant in round 0.
-    type SigningCommitments: Send + Sync + Clone + 'static;
-    /// Signing package constructed by the controller and broadcast in round 1.
-    type SigningPackage: Send + Sync + 'static;
-    /// Signature share produced by each participant in round 1.
-    type SignatureShare: Send + Sync + Clone + 'static;
-    /// Public key package used for final signature aggregation.
-    type PublicKeyPackage: Send + Sync + 'static;
-    /// Aggregated signature produced by the controller.
-    type Signature: Send + Sync + 'static;
-
-    /// The algorithm identifier for this curve.
-    ///
-    /// # Returns
-    /// * `Algorithm` - The algorithm enum variant corresponding to this curve.
-    fn algorithm() -> Algorithm;
+    /// The frost_core Ciphersuite for this curve.
+    type Curve: Ciphersuite + Send + Sync;
 
     /// Create a FROST Identifier from a u16.
     ///
@@ -73,10 +69,20 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     ///   to a valid FROST Identifier for this curve.
     ///
     /// # Returns
-    /// * `Self::Identifier` - The curve-specific FROST Identifier type.
+    /// * `FrostIdentifier<Self::Curve>` - The curve-specific FROST Identifier
+    ///   type.
     fn identifier_from_u16(
-        identifier: u16,
-    ) -> Result<Self::Identifier, Errors>;
+        id: u16,
+    ) -> Result<FrostIdentifier<Self::Curve>, Errors> {
+        FrostIdentifier::<Self::Curve>::try_from(id).map_err(
+            |error: Error<Self::Curve>| {
+                Errors::InvalidParticipant(format!(
+                    "Failed to create identifier from {}: {:?}",
+                    id, error
+                ))
+            },
+        )
+    }
 
     /// Deserialize a `PublicKeyPackage` from postcard bytes.
     ///
@@ -88,10 +94,18 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     ///   format.
     ///
     /// # Returns
-    /// * `Self::PublicKeyPackage` - The deserialized public key package.
+    /// * `FrostPublicKeyPackage<Self::Curve>` - The deserialized public key
+    ///   package.
     fn deserialize_public_key_package(
         bytes: &[u8],
-    ) -> Result<Self::PublicKeyPackage, Errors>;
+    ) -> Result<FrostPublicKeyPackage<Self::Curve>, Errors> {
+        from_bytes(bytes).map_err(|error: PostcardError| {
+            Errors::InvalidMessage(format!(
+                "Failed to deserialize public key package: {}",
+                error
+            ))
+        })
+    }
 
     /// Deserialize `SigningCommitments` from postcard bytes.
     ///
@@ -103,18 +117,26 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     ///   format.
     ///
     /// # Returns
-    /// * `Self::SigningCommitments` - The deserialized signing commitments.
+    /// * `FrostSigningCommitments<Self::Curve>` - The deserialized signing
+    ///   commitments.
     fn deserialize_commitments(
         bytes: &[u8],
-    ) -> Result<Self::SigningCommitments, Errors>;
+    ) -> Result<FrostSigningCommitments<Self::Curve>, Errors> {
+        from_bytes(bytes).map_err(|error: PostcardError| {
+            Errors::InvalidMessage(format!(
+                "Failed to deserialize signing commitments: {}",
+                error
+            ))
+        })
+    }
 
     /// Construct a `SigningPackage` from collected commitments and the
     /// message.
     ///
     /// # Arguments
-    /// * `commitments` (`BTreeMap<Self::Identifier,
-    ///   Self::SigningCommitments>`) - The commitments collected from all
-    ///   participants in round 0.
+    /// * `commitments` (`BTreeMap<FrostIdentifier<Self::Curve>,
+    ///   FrostSigningCommitments<Self::Curve>>`) - The commitments collected
+    ///   from all participants in round 0.
     /// * `message` (`&[u8]`) - The message to be signed, embedded in the
     ///   signing package and verified by each node before signing.
     ///
@@ -123,18 +145,23 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     ///   constructed due to missing or invalid commitments.
     ///
     /// # Returns
-    /// * `Self::SigningPackage` - The constructed signing package ready for
-    ///   broadcast in round 1.
+    /// * `FrostSigningPackage<Self::Curve>` - The constructed signing package
+    ///   ready for broadcast in round 1.
     fn build_signing_package(
-        commitments: BTreeMap<Self::Identifier, Self::SigningCommitments>,
+        commitments: BTreeMap<
+            FrostIdentifier<Self::Curve>,
+            FrostSigningCommitments<Self::Curve>,
+        >,
         message: &[u8],
-    ) -> Result<Self::SigningPackage, Errors>;
+    ) -> Result<FrostSigningPackage<Self::Curve>, Errors> {
+        Ok(FrostSigningPackage::new(commitments, message))
+    }
 
     /// Serialize a `SigningPackage` to postcard bytes.
     ///
     /// # Arguments
-    /// * `package` (`&Self::SigningPackage`) - The signing package to
-    ///   serialize.
+    /// * `package` (`&FrostSigningPackage<Self::Curve>`) - The signing package
+    ///   to serialize.
     ///
     /// # Errors
     /// * `Errors::InvalidMessage` - If serialization fails due to invalid
@@ -143,8 +170,17 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     /// # Returns
     /// * `Vec<u8>` - The serialized signing package as bytes.
     fn serialize_signing_package(
-        package: &Self::SigningPackage,
-    ) -> Result<Vec<u8>, Errors>;
+        package: &FrostSigningPackage<Self::Curve>,
+    ) -> Result<Vec<u8>, Errors> {
+        to_allocvec(package).map(|value: Vec<u8>| value.to_vec()).map_err(
+            |error: PostcardError| {
+                Errors::InvalidMessage(format!(
+                    "Failed to serialize signing package: {}",
+                    error
+                ))
+            },
+        )
+    }
 
     /// Deserialize a `SignatureShare` from postcard bytes.
     ///
@@ -156,41 +192,62 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     ///   format.
     ///
     /// # Returns
-    /// * `Self::SignatureShare` - The deserialized signature share.
+    /// * `FrostSignatureShare<Self::Curve>` - The deserialized signature
+    ///   share.
     fn deserialize_signature_share(
         bytes: &[u8],
-    ) -> Result<Self::SignatureShare, Errors>;
+    ) -> Result<FrostSignatureShare<Self::Curve>, Errors> {
+        from_bytes(bytes).map_err(|error: PostcardError| {
+            Errors::InvalidMessage(format!(
+                "Failed to deserialize signature share: {}",
+                error
+            ))
+        })
+    }
 
     /// Aggregate signature shares into a final signature.
     ///
     /// # Arguments
-    /// * `signing_package` (`&Self::SigningPackage`) - The signing package
-    ///   that was signed by the participants, used for verification during
+    /// * `signing_package` (`&FrostSigningPackage<Self::Curve>`) - The signing
+    ///   package that was signed by the participants, used for verification
+    ///   during aggregation.
+    /// * `shares` (`&BTreeMap<FrostIdentifier<Self::Curve>,
+    ///   FrostSignatureShare<Self::Curve>>`) - The signature shares collected
+    ///   from all participants in round 1, mapped by their identifiers.
+    /// * `public_key_package` (`&FrostPublicKeyPackage<Self::Curve>`) - The
+    ///   public key package used for verifying the signature shares during
     ///   aggregation.
-    /// * `shares` (`&BTreeMap<Self::Identifier, Self::SignatureShare>`) - The
-    ///   signature shares collected from all participants in round 1, mapped
-    ///   by their identifiers.
-    /// * `public_key_package` (`&Self::PublicKeyPackage`) - The public key
-    ///   package used for verifying the signature shares during aggregation.
     ///
     /// # Errors
     /// * `Errors::InvalidSignature` - If any signature share is invalid during
     ///   aggregation, or if the final aggregated signature fails verification.
     ///
     /// # Returns
-    /// * `Self::Signature` - The final aggregated signature produced by the
-    ///   controller.
+    /// * `FrostSignature<Self::Curve>` - The final aggregated signature
+    ///   produced by the controller.
     fn aggregate(
-        signing_package: &Self::SigningPackage,
-        shares: &BTreeMap<Self::Identifier, Self::SignatureShare>,
-        public_key_package: &Self::PublicKeyPackage,
-    ) -> Result<Self::Signature, Errors>;
+        signing_package: &FrostSigningPackage<Self::Curve>,
+        shares: &BTreeMap<
+            FrostIdentifier<Self::Curve>,
+            FrostSignatureShare<Self::Curve>,
+        >,
+        public_key_package: &FrostPublicKeyPackage<Self::Curve>,
+    ) -> Result<FrostSignature<Self::Curve>, Errors> {
+        aggregate(signing_package, shares, public_key_package).map_err(
+            |error: Error<Self::Curve>| {
+                Errors::InvalidSignature(format!(
+                    "Failed to aggregate signature shares: {}",
+                    error
+                ))
+            },
+        )
+    }
 
     /// Serialize the final aggregated signature to bytes.
     ///
     /// # Arguments
-    /// * `signature` (`&Self::Signature`) - The final aggregated signature to
-    ///   serialize.
+    /// * `signature` (`&FrostSignature<Self::Curve>`) - The final aggregated
+    ///   signature to serialize.
     ///
     /// # Errors
     /// * `Errors::InvalidMessage` - If serialization fails due to invalid
@@ -199,8 +256,15 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     /// # Returns
     /// * `Vec<u8>` - The serialized signature as bytes.
     fn serialize_signature(
-        signature: &Self::Signature,
-    ) -> Result<Vec<u8>, Errors>;
+        signature: &FrostSignature<Self::Curve>,
+    ) -> Result<Vec<u8>, Errors> {
+        signature.serialize().map_err(|error: Error<Self::Curve>| {
+            Errors::InvalidSignature(format!(
+                "Failed to serialize signature: {}",
+                error
+            ))
+        })
+    }
 }
 
 /// Controller-side FROST signing protocol instance.
@@ -225,22 +289,31 @@ pub struct FrostControllerSigning<C: FrostControllerSigningCurve> {
     /// Node clients for participant communication.
     nodes: Vec<NodeIpcClient>,
     /// Public key package used for final aggregation and verification.
-    public_key_package: C::PublicKeyPackage,
+    public_key_package: FrostPublicKeyPackage<C::Curve>,
     /// Current protocol round.
     round: Round,
     /// Mapping of participant identifier to session identifier.
     sessions: HashMap<u32, String>,
     /// Commitments collected from all participants in round 0.
-    commitments: BTreeMap<C::Identifier, C::SigningCommitments>,
+    commitments:
+        BTreeMap<FrostIdentifier<C::Curve>, FrostSigningCommitments<C::Curve>>,
     /// Signature shares collected from all participants in round 1.
-    shares: BTreeMap<C::Identifier, C::SignatureShare>,
+    shares: BTreeMap<FrostIdentifier<C::Curve>, FrostSignatureShare<C::Curve>>,
     /// Final protocol output, set after successful aggregation.
     output: Option<ProtocolOutput>,
     /// True if the protocol has been aborted.
     aborted: bool,
 }
 
-impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
+impl<C: FrostControllerSigningCurve> FrostControllerSigning<C>
+where
+    FrostIdentifier<C::Curve>: Send + Sync,
+    FrostSigningCommitments<C::Curve>: Send + Sync,
+    FrostSignatureShare<C::Curve>: Send + Sync,
+    FrostPublicKeyPackage<C::Curve>: Send + Sync,
+    FrostSigningPackage<C::Curve>: Send + Sync,
+    FrostSignature<C::Curve>: Send + Sync,
+{
     /// Try to create a new FROST controller signing protocol instance.
     ///
     /// Decodes the public key package from the initialization context.
@@ -267,11 +340,11 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
             },
         };
 
-        let public_key_package: C::PublicKeyPackage =
+        let public_key_package: FrostPublicKeyPackage<C::Curve> =
             C::deserialize_public_key_package(&init.public_key_package)?;
 
         Ok(Self {
-            algorithm: C::algorithm(),
+            algorithm: init.common.algorithm,
             key_identifier: init.common.key_identifier,
             threshold: init.common.threshold,
             participants: init.common.participants,
@@ -350,28 +423,6 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
             })
     }
 
-    /// Build the per-node key identifier used for Vault lookups.
-    ///
-    /// Each node stores its key share under
-    /// `<key_identifier>/<participant_id>` to avoid collisions in Vault.
-    ///
-    /// # Arguments
-    /// * `base` (`&str`) - The base key identifier from the protocol init
-    ///   context.
-    /// * `identifier` (`u32`) - The participant identifier to scope the key
-    ///   identifier for.
-    ///
-    /// # Errors
-    /// * `Errors::InvalidParticipant` - If the participant identifier is
-    ///   invalid.
-    ///
-    /// # Returns
-    /// * `String` - The scoped key identifier in the format
-    ///   `<base>/<identifier>`.
-    fn scoped_key_identifier(base: &str, identifier: u32) -> String {
-        format!("{}/{}", base.trim_end_matches('/'), identifier)
-    }
-
     /// Convert a u32 participant identifier to a curve-specific FROST
     /// Identifier.
     ///
@@ -379,13 +430,15 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
     /// * `Errors::InvalidParticipant` - If conversion fails.
     ///
     /// # Returns
-    /// * `C::Identifier` - The curve-specific FROST Identifier corresponding
-    ///   to the given participant identifier.
-    fn identifier_from_u32(identifier: u32) -> Result<C::Identifier, Errors> {
+    /// * `FrostIdentifier<C::Curve>` - The curve-specific FROST Identifier
+    ///   corresponding to the given participant identifier.
+    fn identifier_from_u32(
+        identifier: u32,
+    ) -> Result<FrostIdentifier<C::Curve>, Errors> {
         C::identifier_from_u16(u16::try_from(identifier).map_err(
             |error: TryFromIntError| {
                 Errors::InvalidParticipant(format!(
-                    "Failed to convert participant identifier {} to u16: {}",
+                    "Failed to convert participant identifier {} to u16: {:?}",
                     identifier, error
                 ))
             },
@@ -415,9 +468,10 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
             let request: StartSigningSessionRequest =
                 StartSigningSessionRequest {
                     // Scoped key identifier for Vault lookup on the node.
-                    key_identifier: Self::scoped_key_identifier(
-                        &self.key_identifier,
-                        identifier,
+                    key_identifier: format!(
+                        "{}/{}",
+                        self.key_identifier.trim_end_matches('/'),
+                        identifier
                     ),
                     algorithm: self.algorithm.as_str().to_string(),
                     threshold: self.threshold,
@@ -462,9 +516,9 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
 
             match wire {
                 FrostWire::Commitments { identifier: id_u32, commitments } => {
-                    let frost_identifier: C::Identifier =
+                    let frost_identifier: FrostIdentifier<C::Curve> =
                         Self::identifier_from_u32(id_u32)?;
-                    let commitments: C::SigningCommitments =
+                    let commitments: FrostSigningCommitments<C::Curve> =
                         C::deserialize_commitments(&commitments)?;
                     self.commitments.insert(frost_identifier, commitments);
                 },
@@ -488,8 +542,14 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
     /// # Errors
     /// * `Errors::InvalidMessage` - If the signing package cannot be encoded
     ///   or if any node call fails.
-    async fn broadcast_signing_package(&mut self) -> Result<(), Errors> {
-        let signing_package: C::SigningPackage =
+    ///
+    /// # Returns
+    /// * `FrostSigningPackage<C::Curve>` - The signing package that was
+    ///   broadcast to the nodes, needed for aggregation in the next step.
+    async fn broadcast_signing_package(
+        &mut self,
+    ) -> Result<FrostSigningPackage<C::Curve>, Errors> {
+        let signing_package: FrostSigningPackage<C::Curve> =
             C::build_signing_package(self.commitments.clone(), &self.message)?;
 
         let payload: Vec<u8> = encode_wire(&FrostWire::SigningPackage {
@@ -498,18 +558,21 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
 
         let mut futures: FuturesUnordered<
             impl Future<
-                Output = Result<(C::Identifier, C::SignatureShare), Errors>,
+                Output = Result<
+                    (FrostIdentifier<C::Curve>, FrostSignatureShare<C::Curve>),
+                    Errors,
+                >,
             >,
         > = FuturesUnordered::new();
 
-        for (identifier, session_identifier) in self.sessions.clone() {
+        for (&identifier, session_identifier) in &self.sessions {
             let node: NodeIpcClient = self.node_clone(identifier)?;
             let payload: Vec<u8> = payload.clone();
 
             futures.push(async move {
                 let response: SubmitRoundResponse = node
                     .submit_round(SubmitRoundRequest {
-                        session_identifier,
+                        session_identifier: session_identifier.clone(),
                         round: 1,
                         from: None,
                         to: Some(identifier),
@@ -542,9 +605,9 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
                         identifier: id_u32,
                         signature_share,
                     } => {
-                        let frost_identifier: C::Identifier =
+                        let frost_identifier: FrostIdentifier<C::Curve> =
                             Self::identifier_from_u32(id_u32)?;
-                        let share: C::SignatureShare =
+                        let share: FrostSignatureShare<C::Curve> =
                             C::deserialize_signature_share(&signature_share)?;
                         Ok((frost_identifier, share))
                     },
@@ -556,12 +619,14 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
         }
 
         while let Some(result) = futures.next().await {
-            let (identifier, share): (C::Identifier, C::SignatureShare) =
-                result?;
+            let (identifier, share): (
+                FrostIdentifier<C::Curve>,
+                FrostSignatureShare<C::Curve>,
+            ) = result?;
             self.shares.insert(identifier, share);
         }
 
-        Ok(())
+        Ok(signing_package)
     }
 
     /// Aggregate all collected signature shares into a final signature and
@@ -570,15 +635,18 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
     /// Verifies the aggregated signature against the public key package before
     /// storing — `frost_*::aggregate` performs this check internally.
     ///
+    /// # Arguments
+    /// * `signing_package` (`FrostSigningPackage<C::Curve>`) - The signing
+    ///   package that was signed by the participants, used for verification
+    ///   during aggregation.
+    ///
     /// # Errors
     /// * `Errors::InvalidSignature` - If aggregation or serialization fails.
-    fn aggregate(&mut self) -> Result<(), Errors> {
-        // Reconstruct the signing package with the same commitments used
-        // during broadcast — required for deterministic aggregation.
-        let signing_package: C::SigningPackage =
-            C::build_signing_package(self.commitments.clone(), &self.message)?;
-
-        let signature: C::Signature = C::aggregate(
+    fn aggregate(
+        &mut self,
+        signing_package: FrostSigningPackage<C::Curve>,
+    ) -> Result<(), Errors> {
+        let signature: FrostSignature<C::Curve> = C::aggregate(
             &signing_package,
             &self.shares,
             &self.public_key_package,
@@ -593,7 +661,15 @@ impl<C: FrostControllerSigningCurve> FrostControllerSigning<C> {
 }
 
 #[async_trait]
-impl<C: FrostControllerSigningCurve> Protocol for FrostControllerSigning<C> {
+impl<C: FrostControllerSigningCurve> Protocol for FrostControllerSigning<C>
+where
+    FrostIdentifier<C::Curve>: Send + Sync,
+    FrostSigningCommitments<C::Curve>: Send + Sync,
+    FrostSignatureShare<C::Curve>: Send + Sync,
+    FrostPublicKeyPackage<C::Curve>: Send + Sync,
+    FrostSigningPackage<C::Curve>: Send + Sync,
+    FrostSignature<C::Curve>: Send + Sync,
+{
     fn algorithm(&self) -> Algorithm {
         self.algorithm
     }
@@ -638,8 +714,9 @@ impl<C: FrostControllerSigningCurve> Protocol for FrostControllerSigning<C> {
         self.round = 1;
 
         self.collect_commitments().await?;
-        self.broadcast_signing_package().await?;
-        self.aggregate()?;
+        let signing_package: FrostSigningPackage<C::Curve> =
+            self.broadcast_signing_package().await?;
+        self.aggregate(signing_package)?;
 
         self.round = 2;
 

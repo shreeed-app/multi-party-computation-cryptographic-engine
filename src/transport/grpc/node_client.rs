@@ -21,6 +21,7 @@ use crate::{
         CollectRoundResponse,
         FinalizeSessionRequest,
         FinalizeSessionResponse,
+        StartAuxiliaryGenerationSessionRequest,
         StartKeyGenerationSessionRequest,
         StartSessionResponse,
         StartSigningSessionRequest,
@@ -56,9 +57,10 @@ impl NodeIpcClient {
         let endpoint: Endpoint =
             Endpoint::from_shared(config.endpoint.clone())?
                 .connect_timeout(Duration::from_secs(20))
-                .tcp_keepalive(Some(Duration::from_secs(30)))
-                .http2_keep_alive_interval(Duration::from_secs(30))
-                .keep_alive_timeout(Duration::from_secs(10));
+                .tcp_keepalive(Some(Duration::from_secs(60)))
+                .http2_keep_alive_interval(Duration::from_secs(60))
+                .keep_alive_timeout(Duration::from_secs(30))
+                .timeout(Duration::from_secs(300));
 
         Ok(Self { config, endpoint })
     }
@@ -125,6 +127,38 @@ impl NodeIpcClient {
         > = self.make_client().await?;
 
         match client.start_key_generation_session(request).await {
+            Ok(response) => Ok(response.into_inner()),
+            Err(status) => Err(status),
+        }
+    }
+
+    /// Start an auxiliary generation session with the node.
+    ///
+    /// # Arguments
+    /// * `request` (`StartAuxiliaryGenerationSessionRequest`) - The request
+    ///   containing auxiliary generation session parameters.
+    ///
+    /// # Errors
+    /// * `Status` - If any error occurs during the RPC call.
+    ///
+    /// # Returns
+    /// * `StartSessionResponse` - The response containing session details and
+    ///   initial messages.
+    #[instrument(skip(self, request))]
+    pub async fn start_auxiliary_generation(
+        &self,
+        request: StartAuxiliaryGenerationSessionRequest,
+    ) -> Result<StartSessionResponse, Status> {
+        tracing::debug!(
+            "Starting auxiliary generation session for key {}.",
+            request.key_identifier
+        );
+
+        let mut client: NodeClient<
+            InterceptedService<Channel, ClientAuthInterceptor>,
+        > = self.make_client().await?;
+
+        match client.start_auxiliary_generation_session(request).await {
             Ok(response) => Ok(response.into_inner()),
             Err(status) => Err(status),
         }

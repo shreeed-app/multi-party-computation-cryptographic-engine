@@ -1,6 +1,6 @@
 //! Protocol implementations.
 //!
-//! This module organises all supported protocol families, the factory
+//! This module organizes all supported protocol families, the factory
 //! responsible for instantiating them, and the shared types and traits they
 //! build on.
 //!

@@ -2,10 +2,10 @@
 
 use async_trait::async_trait;
 use base64::{DecodeError, Engine as _, engine::general_purpose};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use vaultrs::{
     client::{VaultClient, VaultClientSettings, VaultClientSettingsBuilder},
-    kv2,
+    kv2::{read, set},
 };
 
 use crate::{
@@ -88,14 +88,14 @@ impl HashicorpVaultProvider {
     /// Resolve Vault path for a given key_id.
     ///
     /// # Arguments
-    /// * `key_id` (`&str`) - Key share identifier.
+    /// * `key_identifier` (`&str`) - Key share identifier.
     ///
     /// # Returns
     /// * `String` - Full Vault secret path.
-    fn secret_path(&self, key_id: &str) -> String {
+    fn secret_path(&self, key_identifier: &str) -> String {
         let prefix: &str = self.prefix.trim_matches('/');
-        let key_id: &str = key_id.trim_matches('/');
-        format!("{}/{}", prefix, key_id)
+        let key_identifier: &str = key_identifier.trim_matches('/');
+        format!("{}/{}", prefix, key_identifier)
     }
 }
 
@@ -103,15 +103,23 @@ impl HashicorpVaultProvider {
 impl VaultProvider for HashicorpVaultProvider {
     async fn get_key_share(
         &self,
-        key_id: &str,
+        key_identifier: &str,
     ) -> Result<Secret<Vec<u8>>, Errors> {
-        let path: String = self.secret_path(key_id);
+        let path: String = self.secret_path(key_identifier);
+
+        tracing::debug!(
+            "Retrieving key share from Vault at path: {}, \
+            (key_identifier = {})",
+            path,
+            key_identifier
+        );
+
         // Extract and decode the base64 share in steps: first get the string,
         // then decode to bytes, then drop JSON value.
         let bytes: Vec<u8> = {
             // Get the base64 string from JSON.
             let value: Value =
-                match kv2::read(&self.client, &self.mount, &path).await {
+                match read(&self.client, &self.mount, &path).await {
                     Ok(data) => data,
                     Err(error) => {
                         return Err(Errors::VaultError(format!(
@@ -150,7 +158,7 @@ impl VaultProvider for HashicorpVaultProvider {
     /// Store a key share in Vault.
     ///
     /// # Arguments
-    /// * `key_id` (`&str`) - Key share identifier.
+    /// * `key_identifier` (`&str`) - Key share identifier.
     /// * `key_share` (`&KeyShare`) - Opaque key share bytes.
     ///
     /// # Errors
@@ -160,10 +168,16 @@ impl VaultProvider for HashicorpVaultProvider {
     /// * `()` - Empty result on success.
     async fn store_key_share(
         &self,
-        key_id: &str,
+        key_identifier: &str,
         key_share: KeyShare,
     ) -> Result<(), Errors> {
-        let path: String = self.secret_path(key_id);
+        let path: String = self.secret_path(key_identifier);
+
+        tracing::debug!(
+            "Storing key share in Vault at path: {}, (key_identifier = {})",
+            path,
+            key_identifier
+        );
 
         // Encode directly from reference, without cloning.
         let share_b64: String = key_share.with_ref(|bytes: &Vec<u8>| {
@@ -171,7 +185,7 @@ impl VaultProvider for HashicorpVaultProvider {
         });
 
         // Prepare JSON object with field.
-        let mut data: Value = Value::Object(serde_json::Map::new());
+        let mut data: Value = Value::Object(Map::new());
         if let Some(data) = data.as_object_mut() {
             data.insert(self.field.clone(), Value::String(share_b64));
         } else {
@@ -181,7 +195,7 @@ impl VaultProvider for HashicorpVaultProvider {
         }
 
         // Store in Vault KV v2.
-        match kv2::set(&self.client, &self.mount, &path, &data).await {
+        match set(&self.client, &self.mount, &path, &data).await {
             Ok(_) => Ok(()),
             Err(error) => Err(Errors::VaultError(format!(
                 "Failed to store secret in Vault: {}",

@@ -10,7 +10,7 @@ participant_id = 1
 address = "127.0.0.1:50051"
 
 # Session time-to-live (seconds)
-ttl_seconds = 60
+ttl_seconds = 600
 
 [ipc.auth]
 # Shared token expected from controller.

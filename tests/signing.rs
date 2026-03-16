@@ -15,11 +15,12 @@ use app::{
         SignRequest,
         SignResponse,
         controller_client::ControllerClient,
+        signature_result::FinalSignature,
     },
     protocols::algorithm::Algorithm,
 };
 use helpers::cluster::start_cluster_once;
-use sha2::{Digest, Sha256};
+use rand::random;
 use tonic::{service::interceptor::InterceptedService, transport::Channel};
 
 use crate::helpers::config::ClusterConfig;
@@ -62,7 +63,7 @@ async fn run_signing_test(algorithm: Algorithm) {
     // Generate a key to sign with. The key identifier is scoped to the
     // algorithm to avoid conflicts across test runs.
     let key_identifier: String =
-        format!("test-signing-{}", algorithm.as_str());
+        format!("{}-{}", algorithm.as_str(), random::<u64>());
 
     let keygen_response: GenerateKeyResponse = client
         .generate_key(GenerateKeyRequest {
@@ -80,10 +81,10 @@ async fn run_signing_test(algorithm: Algorithm) {
 
     // All signing algorithms expect a 32-byte message digest. Hash the test
     // message with SHA-256 before submitting it to the signing protocol.
-    let message: Vec<u8> = Sha256::digest(
-        format!("test-message-{}", algorithm.as_str()).as_bytes(),
-    )
-    .to_vec();
+    let message: Vec<u8> =
+        format!("{}-{}", algorithm.as_str(), random::<u64>())
+            .as_bytes()
+            .to_vec();
 
     let sign_response: SignResponse = client
         .sign(SignRequest {
@@ -98,7 +99,13 @@ async fn run_signing_test(algorithm: Algorithm) {
         .expect("Signing failed.")
         .into_inner();
 
-    assert!(sign_response.result.is_some());
+    let result: FinalSignature = sign_response
+        .result
+        .expect("Signing result missing.")
+        .final_signature
+        .expect("Final signature missing in signing result.");
+
+    println!("Signature: {:?}", result);
 }
 
 /// Macro to generate a signing test function for a given algorithm.
@@ -111,12 +118,12 @@ macro_rules! generate_signing_test {
     };
 }
 
-generate_signing_test!(test_sign_frost_ed25519, Algorithm::FrostEd25519);
+generate_signing_test!(test_frost_ed25519, Algorithm::FrostEd25519);
 generate_signing_test!(
-    test_sign_frost_schnorr_secp256k1,
+    test_frost_schnorr_secp256k1,
     Algorithm::FrostSchnorrSecp256k1
 );
 generate_signing_test!(
-    test_sign_cggmp24_ecdsa_secp256k1,
+    test_cggmp24_ecdsa_secp256k1,
     Algorithm::Cggmp24EcdsaSecp256k1
 );

@@ -7,5 +7,6 @@
 
 pub mod controller;
 pub mod node;
+pub mod security_level;
 pub mod stored_key;
 pub mod wire;

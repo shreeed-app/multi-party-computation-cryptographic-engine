@@ -1862,6 +1862,7 @@ dependencies = [
  "crossbeam-channel",
  "dotenvy",
  "figment",
+ "frost-core",
  "frost-ed25519",
  "frost-secp256k1",
  "futures",

@@ -36,7 +36,7 @@ impl EnvKey {
         var(self.as_ref()).ok().filter(|value: &String| !value.is_empty())
     }
 
-    /// Read and parse into `T`, panicking if absent or unparseable.
+    /// Read and parse into `T`, panicking if absent or un-parseable.
     ///
     /// # Type Parameters
     /// * `T` - The type to parse the environment variable into. Must implement

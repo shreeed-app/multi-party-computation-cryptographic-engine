@@ -27,6 +27,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
+test-fast-crypto = []
 
 [dependencies]
 async-trait = "0.1.89"
@@ -42,6 +43,7 @@ config = "0.15.19"
 crossbeam-channel = "0.5.15"
 dotenvy = "0.15.7"
 figment = { version = "0.10.19", features = ["env"] }
+frost-core = "2.2.0"
 frost-ed25519 = { version = "2.2.0", features = ["serde"] }
 frost-secp256k1 = "2.2.0"
 futures = "0.3.32"
@@ -58,7 +60,7 @@ rand = "0.10.0"
 # crates compatibility, versions 0.9+ are not compatible.
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 rkyv = { version = "0.8.15", features = ["std"] }
-round-based = "0.4.1"
+round-based = { version = "0.4.1" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10.9"

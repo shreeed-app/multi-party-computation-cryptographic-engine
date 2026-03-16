@@ -17,6 +17,8 @@ pub enum ProtocolInit {
     KeyGeneration(KeyGenerationInit),
     /// Signing protocol initialization.
     Signing(SigningInit),
+    /// Auxiliary generation protocol initialization.
+    AuxiliaryGeneration(AuxiliaryGenerationInit),
 }
 
 #[derive(Debug)]
@@ -105,6 +107,47 @@ pub struct ControllerKeyGenerationInit {
     pub nodes: Vec<NodeIpcClient>,
 }
 
+/// Auxiliary generation protocol initialization context.
+#[derive(Debug)]
+pub enum AuxiliaryGenerationInit {
+    /// Node participant auxiliary generation protocol initialization.
+    Node(NodeAuxiliaryGenerationInit),
+    /// Controller auxiliary generation protocol initialization.
+    Controller(ControllerAuxiliaryGenerationInit),
+}
+
+/// Auxiliary generation protocol initialization context for both node and
+#[derive(Debug)]
+pub struct DefaultAuxiliaryGenerationInit {
+    /// Unique key identifier.
+    pub key_identifier: String,
+    /// Algorithm name.
+    pub algorithm: Algorithm,
+    /// Number of participants.
+    pub participants: u32,
+}
+
+/// Auxiliary generation protocol initialization context for node participants.
+#[derive(Debug)]
+pub struct NodeAuxiliaryGenerationInit {
+    /// Common auxiliary generation initialization parameters.
+    pub common: DefaultAuxiliaryGenerationInit,
+    /// Participant's identifier as u32.
+    pub identifier: u32,
+    /// Incomplete key share or other protocol-specific data to be stored
+    /// locally.
+    pub incomplete_key_share: KeyShare,
+}
+
+/// Auxiliary generation protocol initialization context for the controller.
+#[derive(Debug)]
+pub struct ControllerAuxiliaryGenerationInit {
+    /// Common auxiliary generation initialization parameters.
+    pub common: DefaultAuxiliaryGenerationInit,
+    /// List of all participants (including self).
+    pub nodes: Vec<NodeIpcClient>,
+}
+
 /// Final output (protocol-dependent).
 #[derive(Debug)]
 pub enum Signature {
@@ -137,6 +180,14 @@ pub enum ProtocolOutput {
         /// encoded). For CGGMP24: protocol-specific aggregation
         /// context.
         public_key_package: Vec<u8>,
+    },
+
+    /// Result of an auxiliary generation protocol.
+    AuxiliaryGeneration {
+        /// Unique key identifier.
+        key_identifier: String,
+        /// Blob to be stored locally (protocol-specific).
+        key_share: Option<KeyShare>,
     },
 
     /// Result of a signing protocol.

@@ -18,6 +18,7 @@ use tokio::{
         oneshot::{Receiver, Sender, channel},
     },
 };
+use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::helpers::{config::ClusterConfig, vault::vault_config};
 
@@ -44,7 +45,7 @@ pub async fn spawn_node(index: usize) -> Receiver<()> {
             node_id: cluster_config.node_participant_id(index).to_string(),
             participant_id: cluster_config.node_participant_id(index),
             address: format!("127.0.0.1:{}", cluster_config.node_port(index)),
-            ttl_seconds: 120,
+            ttl_seconds: 600,
             auth: AuthConfig { token: cluster_config.node_token(index) },
         },
         vault: vault_config(),
@@ -105,6 +106,11 @@ pub async fn start_cluster_once() {
 
     READY
         .get_or_init(|| async {
+            let _ = fmt()
+                .with_env_filter(EnvFilter::from_default_env())
+                .with_test_writer()
+                .try_init();
+
             let cluster_config: &ClusterConfig = ClusterConfig::get();
 
             let node_receivers: Vec<Receiver<()>> =

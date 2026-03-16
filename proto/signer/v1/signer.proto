@@ -20,6 +20,11 @@ service Node {
   rpc StartKeyGenerationSession (StartKeyGenerationSessionRequest)
   returns (StartSessionResponse);
 
+  /// Start a new auxiliary generation session and execute round 0.
+  /// Returns the session identifier and the initial round messages.
+  rpc StartAuxiliaryGenerationSession (StartAuxiliaryGenerationSessionRequest)
+  returns (StartSessionResponse);
+
   /// Deliver a round message to the node and return any messages produced
   /// synchronously. For asynchronous protocols, use CollectRound to retrieve
   /// messages produced by the worker after all round messages are delivered.
@@ -137,6 +142,19 @@ message StartKeyGenerationSessionRequest {
   uint32 identifier = 5;
 }
 
+/// Request to start a new auxiliary generation session on a node.
+message StartAuxiliaryGenerationSessionRequest {
+  /// Stable identifier for the auxiliary data being generated.
+  string key_identifier = 1;
+  /// Algorithm identifier.
+  string algorithm = 2;
+  /// Minimum number of participants required to sign (t).
+  uint32 participants = 3;
+  /// Index of this participant in the protocol (0-based for CGGMP24,
+  /// 1-based for FROST).
+  uint32 identifier = 4;
+}
+
 /// Response to a session start request.
 message StartSessionResponse {
   /// Unique identifier for the created session.
@@ -210,6 +228,8 @@ message FinalizeSessionResponse {
     SignatureResult signature = 1;
     /// Produced by key generation sessions.
     KeyGenerationResult key_generation = 2;
+    /// Produced by auxiliary generation sessions.
+    AuxiliaryGenerationResult auxiliary_generation = 3;
   }
 }
 
@@ -247,6 +267,9 @@ message EcdsaSignature {
   /// Recovery identifier — used to recover the public key from the signature.
   uint32 v = 3;
 }
+
+/// Final output of an auxiliary generation session.
+message AuxiliaryGenerationResult {}
 
 /// Request to abort a session on a node.
 message AbortSessionRequest {

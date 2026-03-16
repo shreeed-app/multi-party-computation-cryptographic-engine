@@ -103,7 +103,7 @@ impl RuntimeApi for NodeRuntime {
         let server: impl Future<Output = Result<(), Error>> =
             Server::builder()
                 .layer(ConcurrencyLimitLayer::new(100))
-                .layer(TimeoutLayer::new(Duration::from_secs(100)))
+                .layer(TimeoutLayer::new(Duration::from_secs(600)))
                 .layer(auth_layer)
                 .add_service(reflection_service)
                 .add_service(NodeServer::new(server))

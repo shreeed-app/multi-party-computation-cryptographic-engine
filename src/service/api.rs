@@ -44,7 +44,7 @@ pub trait EngineApi: Send + Sync + 'static {
     ///   processing the submitted message.
     async fn submit_round(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
         message: RoundMessage,
     ) -> Result<Vec<RoundMessage>, Errors>;
 
@@ -59,7 +59,7 @@ pub trait EngineApi: Send + Sync + 'static {
     ///   expected messages have been collected).
     async fn collect_round(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
     ) -> Result<(Vec<RoundMessage>, bool), Errors>;
 
     /// Collect round messages from all participants for the current round.
@@ -75,7 +75,7 @@ pub trait EngineApi: Send + Sync + 'static {
     /// * `ProtocolOutput` - Collected messages for the current round.
     async fn finalize(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
     ) -> Result<ProtocolOutput, Errors>;
 
     /// Abort an ongoing session.
@@ -87,6 +87,8 @@ pub trait EngineApi: Send + Sync + 'static {
     ///
     /// # Returns
     /// * `()` - On successful abortion.
-    async fn abort(&self, session_id: SessionIdentifier)
-    -> Result<(), Errors>;
+    async fn abort(
+        &self,
+        session_identifier: SessionIdentifier,
+    ) -> Result<(), Errors>;
 }

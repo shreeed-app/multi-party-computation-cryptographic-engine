@@ -4,9 +4,18 @@ use crate::{
     protocols::{
         algorithm::Algorithm,
         cggmp24::{
-            controller::keys::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1ControllerKeyGeneration,
+            controller::{
+                keys::{
+                    auxiliary::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1ControllerAuxiliaryGeneration,
+                    ecdsa_secp256k1::Cggmp24EcdsaSecp256k1ControllerKeyGeneration,
+                },
+                tasks::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1ControllerSigning,
+            },
             node::{
-                keys::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1NodeKeyGeneration,
+                keys::{
+                    auxiliary::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration,
+                    ecdsa_secp256k1::Cggmp24EcdsaSecp256k1NodeKeyGeneration,
+                },
                 tasks::ecdsa_secp256k1::Cggmp24EcdsaSecp256k1NodeSigning,
             },
         },
@@ -30,7 +39,12 @@ use crate::{
             },
         },
         protocol::Protocol,
-        types::{KeyGenerationInit, ProtocolInit, SigningInit},
+        types::{
+            AuxiliaryGenerationInit,
+            KeyGenerationInit,
+            ProtocolInit,
+            SigningInit,
+        },
     },
     transport::errors::Errors,
 };
@@ -106,6 +120,48 @@ impl ProtocolFactory {
                 },
             },
 
+            ProtocolInit::AuxiliaryGeneration(init) => match init {
+                // Auxiliary generation is currently only supported for
+                // CGGMP-24 secp256k1.
+                AuxiliaryGenerationInit::Node(init) => {
+                    match init.common.algorithm {
+                        Algorithm::Cggmp24EcdsaSecp256k1 => Ok(Box::new(
+                            Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration::try_new(
+                                ProtocolInit::AuxiliaryGeneration(
+                                    AuxiliaryGenerationInit::Node(init),
+                                ),
+                            )?,
+                        )),
+                        algorithm => Err(Errors::UnsupportedAlgorithm(
+                            format!(
+                                "Auxiliary generation is not supported \
+                                for this algorithm: {}", 
+                                algorithm.as_str()
+                            ),
+                        )),
+                    }
+                },
+
+                AuxiliaryGenerationInit::Controller(init) => {
+                    match init.common.algorithm {
+                        Algorithm::Cggmp24EcdsaSecp256k1 => Ok(Box::new(
+                            Cggmp24EcdsaSecp256k1ControllerAuxiliaryGeneration::try_new(
+                                ProtocolInit::AuxiliaryGeneration(
+                                    AuxiliaryGenerationInit::Controller(init),
+                                ),
+                            )?,
+                        )),
+                        algorithm => Err(Errors::UnsupportedAlgorithm(
+                            format!(
+                                "Auxiliary generation is not supported \
+                                for this algorithm: {}", 
+                                algorithm.as_str()
+                            ),
+                        )),
+                    }
+                },
+            },
+
             ProtocolInit::Signing(init) => match init {
                 SigningInit::Node(init) => match init.common.algorithm {
                     // Frost ed25519 node signing.
@@ -146,12 +202,13 @@ impl ProtocolFactory {
                         )?,
                     )),
                     // CGGMP-24 secp256k1 node signing.
-                    Algorithm::Cggmp24EcdsaSecp256k1 => {
-                        Err(Errors::UnsupportedAlgorithm(format!(
-                            "Controller signing protocol not implemented for algorithm: {:?}",
-                            Algorithm::Cggmp24EcdsaSecp256k1
-                        )))
-                    },
+                    Algorithm::Cggmp24EcdsaSecp256k1 => Ok(Box::new(
+                        Cggmp24EcdsaSecp256k1ControllerSigning::try_new(
+                            ProtocolInit::Signing(SigningInit::Controller(
+                                init,
+                            )),
+                        )?,
+                    )),
                 },
             },
         }

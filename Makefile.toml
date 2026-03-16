@@ -18,11 +18,103 @@ category = "Development"
 command = "cargo"
 args = ["check"]
 
-[tasks.test]
-description = "Run tests with all features."
-category = ""
+[tasks.test-key-generation-frost-ed25519]
+description = "Run key generation tests for FROST Ed25519."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
 command = "cargo"
-args = ["test", "--all-features"]
+args = [
+    "test",
+    "--test",
+    "key_generation",
+    "test_frost_ed25519",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test-key-generation-frost-schnorr-secp256k1]
+description = "Run key generation tests for FROST Schnorr Secp256k1."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "key_generation",
+    "test_frost_schnorr_secp256k1",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test-key-generation-cggmp24-ecdsa-secp256k1]
+description = "Run key generation tests for CGGMP24 ECDSA Secp256k1."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "key_generation",
+    "test_cggmp24_ecdsa_secp256k1",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test-signing-frost-ed25519]
+description = "Run signing tests for FROST Ed25519."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
+command = "cargo"
+args = ["test", "--test", "signing", "test_frost_ed25519", "--", "--nocapture"]
+
+[tasks.test-signing-frost-schnorr-secp256k1]
+description = "Run signing tests for FROST Schnorr Secp256k1."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "signing",
+    "test_frost_schnorr_secp256k1",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test-signing-cggmp24-ecdsa-secp256k1]
+description = "Run signing tests for CGGMP24 ECDSA Secp256k1."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "signing",
+    "test_cggmp24_ecdsa_secp256k1",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test]
+description = "Run all tests sequentially."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
+command = "cargo"
+args = [
+    "test",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+    "--test-threads=1",
+]
 
 [tasks.fmt-check]
 description = "Check code formatting."

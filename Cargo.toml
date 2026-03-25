@@ -11,10 +11,10 @@ ignored = ["prost", "tonic-prost", "strum"]
 
 [workspace.metadata.dylint]
 libraries = [
-    # { git = "https://github.com/shreeed-app/rust-security-lints", branch = "dev", pattern = "rules/*" },
+    { git = "https://github.com/shreeed-app/rust-security-lints", branch = "dev", pattern = "rules/*" },
     # For local development, you can use the path to the local copy of the 
     # repository instead of the git dependency.
-    { path = "../rust-security-lints/rules/*" },
+    # { path = "../rust-security-lints/rules/*" },
 ]
 
 [[bin]]

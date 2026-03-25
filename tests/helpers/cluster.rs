@@ -45,8 +45,10 @@ pub async fn spawn_node(index: usize) -> Receiver<()> {
 
     let config: NodeRuntimeConfig = NodeRuntimeConfig {
         ipc: NodeIpcConfig {
-            node_id: cluster_config.node_participant_id(index).to_string(),
-            participant_id: cluster_config.node_participant_id(index),
+            node_identifier: cluster_config
+                .node_participant_id(index)
+                .to_string(),
+            participant_identifier: cluster_config.node_participant_id(index),
             address: format!("127.0.0.1:{}", cluster_config.node_port(index)),
             ttl_seconds: 600,
             auth: AuthConfig { token: cluster_config.node_token(index) },
@@ -77,7 +79,7 @@ pub async fn spawn_controller() -> Receiver<()> {
     let nodes: Vec<NodeConfig> = (0..cluster_config.node_count)
         .map(|index: usize| NodeConfig {
             endpoint: cluster_config.node_endpoint(index),
-            participant_id: cluster_config.node_participant_id(index),
+            participant_identifier: cluster_config.node_participant_id(index),
             auth: AuthConfig { token: cluster_config.node_token(index) },
         })
         .collect();

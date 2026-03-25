@@ -49,7 +49,9 @@ impl RuntimeApi for NodeRuntime {
         config: NodeRuntimeConfig,
         ready: Sender<()>,
     ) -> Result<(), Errors> {
-        LoggingEngine::init(format!("Node {}", config.ipc.node_id).as_str());
+        LoggingEngine::init(
+            format!("Node {}", config.ipc.node_identifier).as_str(),
+        );
 
         tracing::info!(
             address = %config.ipc.address,

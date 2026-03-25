@@ -102,7 +102,11 @@ pub struct Cggmp24NodeProtocol<P: CggmpNodeProtocol> {
     /// This participant's identifier as u32.
     pub identifier_u32: u32,
     /// Channel for delivering incoming protocol messages to the worker.
-    incoming_transmitter: Sender<Incoming<P::Message>>,
+    /// Wrapped in `Option` so it can be dropped on abort — dropping the
+    /// sender causes the worker's receiver to return an error, prompting
+    /// the worker thread to exit promptly rather than waiting for the
+    /// 300-second message timeout.
+    incoming_transmitter: Option<Sender<Incoming<P::Message>>>,
     /// Channel for receiving outgoing protocol message batches from the
     /// worker.
     outgoing_receiver: Receiver<Vec<Outgoing<P::Message>>>,
@@ -170,7 +174,7 @@ where
         Self {
             data,
             identifier_u32,
-            incoming_transmitter,
+            incoming_transmitter: Some(incoming_transmitter),
             outgoing_receiver,
             done_receiver,
             pending_messages: VecDeque::new(),
@@ -305,8 +309,13 @@ where
             })?;
 
         // Deliver the message to the worker — P2P if a recipient is set,
-        // broadcast otherwise.
+        // broadcast otherwise. Returns Aborted if the channel was dropped
+        // (i.e. abort_worker was called).
         self.incoming_transmitter
+            .as_ref()
+            .ok_or_else(|| {
+                Errors::Aborted("Protocol has been aborted.".into())
+            })?
             .send(Incoming {
                 id: round_message.round as MsgId,
                 sender,
@@ -329,6 +338,15 @@ where
             )?;
 
         Ok(())
+    }
+
+    /// Signal the worker thread to stop by dropping the incoming channel.
+    ///
+    /// Once the transmitter is dropped the worker's `recv_timeout` call will
+    /// return a `RecvError`, causing it to exit immediately rather than
+    /// waiting for the 300-second message timeout.
+    pub fn abort_worker(&mut self) {
+        self.incoming_transmitter = None;
     }
 
     /// Return true if the protocol is complete and all pending messages

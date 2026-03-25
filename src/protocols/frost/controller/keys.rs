@@ -28,6 +28,7 @@ use crate::{
             Round,
         },
     },
+    secrets::vault::key_path::scoped,
     transport::{
         errors::{Errors, map_status},
         grpc::node_client::NodeIpcClient,
@@ -261,9 +262,9 @@ impl FrostControllerKeyGeneration {
                 // "<key_id>/<participant_id>" to avoid collisions in Vault.
                 let request: StartKeyGenerationSessionRequest =
                     StartKeyGenerationSessionRequest {
-                        key_identifier: format!(
-                            "{}/{}",
-                            self.key_identifier, identifier
+                        key_identifier: scoped(
+                            &self.key_identifier,
+                            identifier,
                         ),
                         algorithm: self.algorithm.as_str().to_string(),
                         threshold: self.threshold,

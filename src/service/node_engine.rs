@@ -112,8 +112,17 @@ impl EngineApi for NodeEngine {
         // call `next_round()` until the protocol is done to collect
         // all produced messages for the first round before returning.
         let mut messages: Vec<RoundMessage> = Vec::new();
-        while let Some(message) = protocol.next_round().await? {
-            messages.push(message);
+        loop {
+            match protocol.next_round().await {
+                Ok(Some(message)) => messages.push(message),
+                Ok(None) => break,
+                Err(error) => {
+                    // Clean up the session store entry so the orphaned session
+                    // doesn't linger until TTL.
+                    self.sessions.remove(session_identifier);
+                    return Err(error);
+                },
+            }
         }
 
         self.live.lock().await.insert(

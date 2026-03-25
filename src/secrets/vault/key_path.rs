@@ -4,14 +4,14 @@
 ///
 /// # Arguments
 /// * `base` (`&str`) - The base key identifier (e.g. `"<base>"`).
-/// * `participant_id` (`u32`) - The participant's index.
+/// * `participant_identifier` (`u32`) - The participant's identifier.
 ///
 /// # Returns
-/// * `String` - Scoped path in the form `"<base>/<participant_id>"`.
-pub fn scoped(base: &str, participant_id: u32) -> String {
+/// * `String` - Scoped path in the form `"<base>/<participant_identifier>"`.
+pub fn scoped(base: &str, participant_identifier: u32) -> String {
     // Strip any accidental trailing separator before appending to produce a
     // canonical path with exactly one separator.
-    format!("{}/{}", base.trim_end_matches('/'), participant_id)
+    format!("{}/{}", base.trim_end_matches('/'), participant_identifier)
 }
 
 /// Extract the base key identifier from a scoped Vault path.
@@ -20,7 +20,8 @@ pub fn scoped(base: &str, participant_id: u32) -> String {
 /// separator is present.
 ///
 /// # Arguments
-/// * `path` (`&str`) - A scoped path such as `"<base>/<participant_id>"`.
+/// * `path` (`&str`) - A scoped path such as
+///   `"<base>/<participant_identifier>"`.
 ///
 /// # Returns
 /// * `&str` - The base portion, e.g. `"<base>"`.

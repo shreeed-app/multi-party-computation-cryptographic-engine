@@ -147,23 +147,24 @@ impl CggmpNodeProtocol for SigningProtocolDescriptor {
         // Compute the SHA-256 prehash of the message and recover the
         // recovery identifier (v) by trial recovery.
         let prehash: [u8; 32] = Sha256::digest(&data.message_bytes).into();
-        let recovery_id: RecoveryId = RecoveryId::trial_recovery_from_prehash(
-            &verifying_key,
-            &prehash,
-            &k256_signature,
-        )
-        .map_err(|error: EcdsaError| {
-            Errors::InvalidSignature(format!(
-                "Failed to recover recovery identifier: {}",
-                error
-            ))
-        })?;
+        let recovery_identifier: RecoveryId =
+            RecoveryId::trial_recovery_from_prehash(
+                &verifying_key,
+                &prehash,
+                &k256_signature,
+            )
+            .map_err(|error: EcdsaError| {
+                Errors::InvalidSignature(format!(
+                    "Failed to recover recovery identifier: {}",
+                    error
+                ))
+            })?;
 
         Ok(ProtocolOutput::Signature(FinalSignature::Ecdsa(EcdsaSignature {
             r: r.to_vec(),
             s: s.to_vec(),
             // u8 to u32 conversion.
-            v: recovery_id.to_byte() as u32,
+            v: recovery_identifier.to_byte() as u32,
         })))
     }
 }
@@ -516,5 +517,6 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
 
     fn abort(&mut self) {
         self.0.aborted = true;
+        self.0.abort_worker();
     }
 }

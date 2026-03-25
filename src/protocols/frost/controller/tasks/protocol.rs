@@ -32,8 +32,7 @@ use crate::{
         SubmitRoundRequest,
         SubmitRoundResponse,
         signature_result::FinalSignature,
-    },
-    protocols::{
+    }, protocols::{
         algorithm::Algorithm,
         codec::{decode_wire, encode_wire},
         frost::wire::FrostWire,
@@ -45,11 +44,10 @@ use crate::{
             Round,
             SigningInit,
         },
-    },
-    transport::{
+    }, secrets::vault::key_path::scoped, transport::{
         errors::{Errors, map_status},
         grpc::node_client::NodeIpcClient,
-    },
+    }
 };
 
 /// Abstracts over FROST curve variants for controller-side signing.
@@ -62,7 +60,7 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     /// Create a FROST Identifier from a u16.
     ///
     /// # Arguments
-    /// * `id` (`u16`) - The identifier to convert.
+    /// * `identifier` (`u16`) - The identifier to convert.
     ///
     /// # Errors
     /// * `Errors::InvalidParticipant` - If the identifier cannot be converted
@@ -72,13 +70,13 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     /// * `FrostIdentifier<Self::Curve>` - The curve-specific FROST Identifier
     ///   type.
     fn identifier_from_u16(
-        id: u16,
+        identifier: u16,
     ) -> Result<FrostIdentifier<Self::Curve>, Errors> {
-        FrostIdentifier::<Self::Curve>::try_from(id).map_err(
+        FrostIdentifier::<Self::Curve>::try_from(identifier).map_err(
             |error: Error<Self::Curve>| {
                 Errors::InvalidParticipant(format!(
                     "Failed to create identifier from {}: {:?}",
-                    id, error
+                    identifier, error
                 ))
             },
         )
@@ -548,10 +546,9 @@ where
                 let request: StartSigningSessionRequest =
                     StartSigningSessionRequest {
                         // Scoped key identifier for Vault lookup on the node.
-                        key_identifier: format!(
-                            "{}/{}",
-                            self.key_identifier.trim_end_matches('/'),
-                            identifier
+                        key_identifier: scoped(
+                            &self.key_identifier,
+                            identifier,
                         ),
                         algorithm: self.algorithm.as_str().to_string(),
                         threshold: self.threshold,
@@ -795,5 +792,7 @@ where
 
     fn abort(&mut self) {
         self.aborted = true;
+        self.commitments.clear();
+        self.shares.clear();
     }
 }

@@ -92,10 +92,14 @@ impl CggmpNodeProtocol for KeyGenerationProtocolDescriptor {
 
         // Serialize the incomplete key share to JSON for storage —
         // combined with AuxInfo during aux gen to produce a full KeyShare.
+        // Cloned before moving into Cggmp24StoredKey so the same bytes can be
+        // reused as the public_key_package without re-serializing.
         let json: Vec<u8> =
             to_vec(&incomplete_key_share).map_err(|error: Error| {
                 Errors::InvalidKeyShare(error.to_string())
             })?;
+
+        let public_key_package: Vec<u8> = json.clone();
 
         // Wrap the JSON blob in a Cggmp24StoredKey and serialize to rkyv
         // bytes for Vault storage.
@@ -123,11 +127,9 @@ impl CggmpNodeProtocol for KeyGenerationProtocolDescriptor {
             key_identifier: scoped(&data.key_identifier, data.identifier_u32),
             key_share: Some(Secret::new(blob)),
             public_key,
-            // Re-serialize the incomplete key share as the public key package
-            // — used by the controller to verify consistency across nodes.
-            public_key_package: to_vec(&incomplete_key_share).map_err(
-                |error: Error| Errors::InvalidKeyShare(error.to_string()),
-            )?,
+            // Reuse the JSON bytes serialized above — avoids a second
+            // call to to_vec for the same data.
+            public_key_package,
         })
     }
 }
@@ -286,5 +288,6 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
 
     fn abort(&mut self) {
         self.0.aborted = true;
+        self.0.abort_worker();
     }
 }

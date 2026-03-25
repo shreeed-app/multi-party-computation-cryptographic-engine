@@ -28,7 +28,7 @@ pub struct NodeConfig {
     /// Endpoint of the node's IPC server.
     pub endpoint: String,
     /// Participant identifier associated with the node.
-    pub participant_id: u32,
+    pub participant_identifier: u32,
     /// Authentication configuration for connecting to the node.
     pub auth: AuthConfig,
 }

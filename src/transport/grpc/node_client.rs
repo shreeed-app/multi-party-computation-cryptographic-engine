@@ -71,7 +71,7 @@ impl NodeIpcClient {
     /// * `Option<u32>` - The participant identifier if available, otherwise
     ///   `None`.
     pub fn participant_id(&self) -> Option<u32> {
-        Some(self.config.participant_id)
+        Some(self.config.participant_identifier)
     }
 
     /// Create a gRPC client for communicating with the node, including

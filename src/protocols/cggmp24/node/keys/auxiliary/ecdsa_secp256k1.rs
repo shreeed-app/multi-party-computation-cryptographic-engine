@@ -323,5 +323,6 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration {
 
     fn abort(&mut self) {
         self.0.aborted = true;
+        self.0.abort_worker();
     }
 }

@@ -22,6 +22,7 @@ use frost_core::{
 use postcard::{Error as PostcardError, from_bytes, to_allocvec};
 use rand_core::OsRng;
 use rkyv::{Archived, access, deserialize, rancor::Error as RkyvError};
+use zeroize::Zeroize;
 
 use crate::{
     proto::signer::v1::{RoundMessage, signature_result::FinalSignature},
@@ -41,6 +42,7 @@ use crate::{
             SigningInit,
         },
     },
+    secrets::secret::Secret,
     transport::errors::Errors,
 };
 
@@ -231,7 +233,7 @@ pub struct FrostNodeSigning<C: FrostSigningCurve> {
     round: Round,
     /// The message to be signed — verified against the signing package in
     /// round 1 to prevent substitution attacks.
-    message: Vec<u8>,
+    message: Secret<Vec<u8>>,
     /// This participant's key package, loaded from Vault.
     key_package: FrostKeyPackage<C::Curve>,
     /// This participant's FROST identifier.
@@ -239,10 +241,10 @@ pub struct FrostNodeSigning<C: FrostSigningCurve> {
     /// This participant's identifier as u32.
     identifier_u32: u32,
     /// Nonces generated in round 0. Consumed exactly once during signing.
-    nonces: Option<FrostSigningNonces<C::Curve>>,
+    nonces: Option<Secret<FrostSigningNonces<C::Curve>>>,
     /// Serialized signature share produced in round 1. Stored as bytes to
     /// avoid re-serializing in `finalize` — consumed during finalization.
-    signature_share_bytes: Option<Vec<u8>>,
+    signature_share_bytes: Option<Secret<Vec<u8>>>,
     /// True if the protocol has been aborted.
     aborted: bool,
 }
@@ -251,7 +253,7 @@ impl<C: FrostSigningCurve> FrostNodeSigning<C>
 where
     FrostIdentifier<C::Curve>: Send + Sync,
     FrostKeyPackage<C::Curve>: Send + Sync,
-    FrostSigningNonces<C::Curve>: Send + Sync,
+    FrostSigningNonces<C::Curve>: Send + Sync + Zeroize,
     FrostSigningCommitments<C::Curve>: Send + Sync,
     FrostSigningPackage<C::Curve>: Send + Sync,
     FrostSignatureShare<C::Curve>: Send + Sync,
@@ -326,7 +328,7 @@ where
             threshold: init.common.threshold,
             participants: init.common.participants,
             round: 0,
-            message: init.common.message,
+            message: Secret::new(init.common.message),
             key_package,
             identifier,
             identifier_u32: stored.identifier,
@@ -342,7 +344,7 @@ impl<C: FrostSigningCurve> Protocol for FrostNodeSigning<C>
 where
     FrostIdentifier<C::Curve>: Send + Sync,
     FrostKeyPackage<C::Curve>: Send + Sync,
-    FrostSigningNonces<C::Curve>: Send + Sync,
+    FrostSigningNonces<C::Curve>: Send + Sync + Zeroize,
     FrostSigningCommitments<C::Curve>: Send + Sync,
     FrostSigningPackage<C::Curve>: Send + Sync,
     FrostSignatureShare<C::Curve>: Send + Sync,
@@ -392,7 +394,7 @@ where
             FrostSigningCommitments<C::Curve>,
         ) = C::commit(&self.key_package)?;
 
-        self.nonces = Some(nonces);
+        self.nonces = Some(Secret::new(nonces));
         self.round = 1;
 
         let payload: Vec<u8> = encode_wire(&FrostWire::Commitments {
@@ -450,7 +452,9 @@ where
                 // Verify the message matches what we were initialized with —
                 // prevents the controller from substituting a different
                 // message after commitments were sent.
-                if signing_package.message() != self.message.as_slice() {
+                if self.message.with_ref(|message: &Vec<u8>| {
+                    signing_package.message() != message.as_slice()
+                }) {
                     return Err(Errors::InvalidMessage(
                         "Signing package message does not match expected \
                         message."
@@ -472,27 +476,29 @@ where
                 }
 
                 // Consume nonces exactly once — they must not be reused.
-                let nonces: FrostSigningNonces<C::Curve> =
+                let nonces: Secret<FrostSigningNonces<C::Curve>> =
                     self.nonces.take().ok_or_else(|| {
                         Errors::InvalidSignature("Missing nonces.".into())
                     })?;
 
-                let signature_share: FrostSignatureShare<C::Curve> =
-                    C::sign(&signing_package, &nonces, &self.key_package)?;
+                let signature_share: FrostSignatureShare<C::Curve> = nonces
+                    .with_ref(|nonce: &FrostSigningNonces<C::Curve>| {
+                        C::sign(&signing_package, nonce, &self.key_package)
+                    })?;
 
                 // Serialize once and store — reused directly in finalize()
                 // to avoid redundant serialization.
                 let signature_share_bytes: Vec<u8> =
                     C::serialize_signature_share(&signature_share)?;
 
-                self.signature_share_bytes =
-                    Some(signature_share_bytes.clone());
-
                 let payload: Vec<u8> =
                     encode_wire(&FrostWire::SignatureShare {
                         identifier: self.identifier_u32,
-                        signature_share: signature_share_bytes,
+                        signature_share: signature_share_bytes.clone(),
                     })?;
+
+                self.signature_share_bytes =
+                    Some(Secret::new(signature_share_bytes));
 
                 Ok(Some(RoundMessage {
                     round: 1,
@@ -525,10 +531,13 @@ where
         }
 
         // take() ensures the share bytes are consumed and cannot be reused.
-        let share_bytes: Vec<u8> =
+        let share_secret: Secret<Vec<u8>> =
             self.signature_share_bytes.take().ok_or_else(|| {
                 Errors::InvalidSignature("Missing signature share.".into())
             })?;
+
+        let share_bytes: Vec<u8> =
+            share_secret.with_ref(|bytes: &Vec<u8>| bytes.clone());
 
         Ok(ProtocolOutput::Signature(FinalSignature::Raw(share_bytes)))
     }

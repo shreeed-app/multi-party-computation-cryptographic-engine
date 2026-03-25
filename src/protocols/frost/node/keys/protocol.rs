@@ -32,6 +32,7 @@ use frost_core::{
 use postcard::{Error as PostcardError, from_bytes, to_allocvec};
 use rand_core::OsRng;
 use rkyv::{rancor::Error as RkyvError, to_bytes, util::AlignedVec};
+use zeroize::Zeroize;
 
 use crate::{
     proto::signer::v1::RoundMessage,
@@ -62,7 +63,7 @@ pub trait FrostCurve: Send + Sync + 'static {
     /// Create a FROST Identifier from a u16.
     ///
     /// # Arguments
-    /// * `id` (`u16`) - The participant identifier as a u16.
+    /// * `identifier` (`u16`) - The participant identifier as a u16.
     ///
     /// # Errors
     /// * `Errors::InvalidProtocolInit` - If the identifier cannot be converted
@@ -72,13 +73,13 @@ pub trait FrostCurve: Send + Sync + 'static {
     /// * `FrostIdentifier<Self::Curve>` - The FROST Identifier corresponding
     ///   to the given identifier.
     fn identifier_from_u16(
-        id: u16,
+        identifier: u16,
     ) -> Result<FrostIdentifier<Self::Curve>, Errors> {
-        FrostIdentifier::<Self::Curve>::try_from(id).map_err(
+        FrostIdentifier::<Self::Curve>::try_from(identifier).map_err(
             |error: <FrostIdentifier<Self::Curve> as TryFrom<u16>>::Error| {
                 Errors::InvalidProtocolInit(format!(
                     "Failed to create FROST identifier from {}: {:?}",
-                    id, error
+                    identifier, error
                 ))
             },
         )
@@ -375,7 +376,7 @@ pub struct FrostNodeKeyGeneration<C: FrostCurve> {
     /// Secret package produced in round 1, consumed in round 2.
     round1_secret: Option<Round1SecretPackage<C::Curve>>,
     /// Secret package produced in round 2, consumed in round 3.
-    round2_secret: Option<Round2SecretPackage<C::Curve>>,
+    round2_secret: Option<Secret<Round2SecretPackage<C::Curve>>>,
     /// Round 1 packages received from all other participants.
     received_round1:
         BTreeMap<FrostIdentifier<C::Curve>, Round1Package<C::Curve>>,
@@ -396,7 +397,7 @@ where
     Round1Package<C::Curve>: Send + Sync,
     Round2Package<C::Curve>: Send + Sync,
     Round1SecretPackage<C::Curve>: Send + Sync,
-    Round2SecretPackage<C::Curve>: Send + Sync,
+    Round2SecretPackage<C::Curve>: Send + Sync + Zeroize,
     FrostKeyPackage<C::Curve>: Send + Sync,
     FrostPublicKeyPackage<C::Curve>: Send + Sync,
 {
@@ -599,7 +600,7 @@ where
     Round1Package<C::Curve>: Send + Sync,
     Round2Package<C::Curve>: Send + Sync,
     Round1SecretPackage<C::Curve>: Send + Sync,
-    Round2SecretPackage<C::Curve>: Send + Sync,
+    Round2SecretPackage<C::Curve>: Send + Sync + Zeroize,
     FrostKeyPackage<C::Curve>: Send + Sync,
     FrostPublicKeyPackage<C::Curve>: Send + Sync,
 {
@@ -736,7 +737,7 @@ where
                     >,
                 ) = C::part2(secret, &self.received_round1)?;
 
-                self.round2_secret = Some(round2_secret);
+                self.round2_secret = Some(Secret::new(round2_secret));
 
                 // Serialize round 2 output packages and resolve their target
                 // u32 identifiers using `identifier_map`.
@@ -759,7 +760,7 @@ where
                 // Take the secret temporarily — released before the mutable
                 // borrow in ingest_round2_packages to avoid a
                 // simultaneous borrow conflict.
-                let secret: Round2SecretPackage<C::Curve> =
+                let secret: Secret<Round2SecretPackage<C::Curve>> =
                     self.round2_secret.take().ok_or_else(|| {
                         Errors::InvalidState("Missing round 2 secret.".into())
                     })?;
@@ -781,10 +782,14 @@ where
                 let (key_package, public_key_package): (
                     FrostKeyPackage<C::Curve>,
                     FrostPublicKeyPackage<C::Curve>,
-                ) = C::part3(
-                    &secret,
-                    &self.received_round1,
-                    &self.received_round2,
+                ) = secret.with_ref(
+                    |secret: &Round2SecretPackage<C::Curve>| {
+                        C::part3(
+                            secret,
+                            &self.received_round1,
+                            &self.received_round2,
+                        )
+                    },
                 )?;
 
                 self.key_package = Some(key_package);
@@ -858,5 +863,9 @@ where
 
     fn abort(&mut self) {
         self.aborted = true;
+        // Explicitly drop secrets — triggers ZeroizeOnDrop for round1_secret
+        // and Secret's Drop impl (which calls zeroize) for round2_secret.
+        self.round1_secret = None;
+        self.round2_secret = None;
     }
 }

@@ -5,10 +5,10 @@
 //! Protocol-specific session startup and output finalization are delegated to
 //! `C`.
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use futures::future::join_all;
-use tokio::task::yield_now;
+use tokio::time::sleep;
 use tonic::Status;
 
 use crate::{
@@ -416,9 +416,11 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
                 break;
             }
 
-            // Yield to the Tokio runtime before retrying — avoids busy-waiting
-            // while allowing other tasks to make progress.
-            yield_now().await;
+            // Sleep briefly before retrying — avoids hammering nodes with
+            // back-to-back gRPC polls during long-running rounds (e.g. aux
+            // gen). 50 ms adds negligible latency while cutting poll rate
+            // by ~20×.
+            sleep(Duration::from_millis(50)).await;
         }
 
         Ok(queue)

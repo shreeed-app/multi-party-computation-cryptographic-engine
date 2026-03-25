@@ -151,19 +151,20 @@ impl<
 
         // For CGGMP24 signing, compute the signer set so the controller can
         // verify all nodes independently derived the same participants.
-        let signer_set: Vec<u32> =
-            if algorithm == Algorithm::Cggmp24EcdsaSecp256k1 {
-                compute_parties(
-                    base_key_identifier,
-                    request.threshold,
-                    request.participants,
-                )?
-                .into_iter()
-                .map(|participant_id: u16| participant_id as u32)
-                .collect()
-            } else {
-                Vec::new()
-            };
+        let signer_set: Vec<u32> = if algorithm
+            == Algorithm::Cggmp24EcdsaSecp256k1
+        {
+            compute_parties(
+                base_key_identifier,
+                request.threshold,
+                request.participants,
+            )?
+            .into_iter()
+            .map(|participant_identifier: u16| participant_identifier as u32)
+            .collect()
+        } else {
+            Vec::new()
+        };
 
         Ok(Response::new(StartSessionResponse {
             session_identifier: session_identifier.to_string(),

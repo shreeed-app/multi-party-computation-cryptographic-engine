@@ -32,7 +32,8 @@ use crate::{
         SubmitRoundRequest,
         SubmitRoundResponse,
         signature_result::FinalSignature,
-    }, protocols::{
+    },
+    protocols::{
         algorithm::Algorithm,
         codec::{decode_wire, encode_wire},
         frost::wire::FrostWire,
@@ -44,10 +45,12 @@ use crate::{
             Round,
             SigningInit,
         },
-    }, secrets::vault::key_path::scoped, transport::{
+    },
+    secrets::vault::key_path::scoped,
+    transport::{
         errors::{Errors, map_status},
         grpc::node_client::NodeIpcClient,
-    }
+    },
 };
 
 /// Abstracts over FROST curve variants for controller-side signing.

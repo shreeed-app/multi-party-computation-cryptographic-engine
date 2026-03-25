@@ -8,7 +8,7 @@ use std::{
     fmt::Debug,
     hint::spin_loop,
     mem::take,
-    sync::{Condvar, LockResult, Mutex, MutexGuard},
+    sync::{Condvar, LockResult, Mutex, MutexGuard, WaitTimeoutResult},
     thread::spawn,
     time::Duration,
 };
@@ -27,6 +27,12 @@ const MAXIMUM_WORKERS: usize = 64;
 /// Timeout for incoming messages. If no message arrives within this window
 /// the worker treats it as a disconnect and aborts.
 const INCOMING_MESSAGE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Maximum time to wait for a worker slot when the concurrency limit is
+/// reached. If no slot becomes available within this window the worker signals
+/// failure instead of blocking indefinitely — prevents hangs when a previous
+/// worker crashed without releasing its slot.
+const WORKER_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Global limiter for concurrent workers. Enforces a maximum number of active
 /// workers across all protocol types, blocking new spawns until a slot is
@@ -237,6 +243,29 @@ fn recover_lock<'l, T>(
     }
 }
 
+/// Helper to recover from a poisoned mutex lock returned by
+/// `Condvar::wait_timeout`.
+///
+/// # Arguments
+/// * `result` - the result of `Condvar::wait_timeout`.
+/// * `context` - the context of the lock for logging purposes.
+///
+/// # Returns
+/// * `(MutexGuard<'_, T>, WaitTimeoutResult)` - guard and timeout status,
+///   recovered if the mutex was poisoned.
+fn recover_lock_timeout<'l, T>(
+    result: LockResult<(MutexGuard<'l, T>, WaitTimeoutResult)>,
+    context: LockContext,
+) -> (MutexGuard<'l, T>, WaitTimeoutResult) {
+    match result {
+        Ok(pair) => pair,
+        Err(poisoned) => {
+            tracing::error!(?context, "Mutex poisoned, recovering.");
+            poisoned.into_inner()
+        },
+    }
+}
+
 /// Completion signal sent by the worker to the node protocol.
 pub enum WorkerDone<O> {
     /// Protocol completed successfully.
@@ -271,6 +300,8 @@ pub fn spawn_worker<P: CggmpProtocol>(worker: Worker<P>) {
 
     spawn(move || {
         // Acquire a slot — blocks if MAXIMUM_WORKERS are already active.
+        // Uses a timeout to avoid hanging indefinitely if a previous worker
+        // crashed without releasing its slot.
         {
             let mut active: MutexGuard<'_, usize> =
                 recover_lock(limiter.active.lock(), LockContext::Acquire);
@@ -282,10 +313,27 @@ pub fn spawn_worker<P: CggmpProtocol>(worker: Worker<P>) {
                     "Worker limit reached, waiting for a slot."
                 );
 
-                active = recover_lock(
-                    limiter.condvar.wait(active),
+                let (new_active, timed_out): (
+                    MutexGuard<'_, usize>,
+                    WaitTimeoutResult,
+                ) = recover_lock_timeout(
+                    limiter
+                        .condvar
+                        .wait_timeout(active, WORKER_ACQUIRE_TIMEOUT),
                     LockContext::Wait,
                 );
+                active = new_active;
+
+                if timed_out.timed_out() && *active >= MAXIMUM_WORKERS {
+                    tracing::error!(
+                        max = MAXIMUM_WORKERS,
+                        timeout_secs = WORKER_ACQUIRE_TIMEOUT.as_secs(),
+                        "Timed out waiting for a worker slot — signaling \
+                        failure to caller."
+                    );
+                    let _ = worker.done_transmitter.send(WorkerDone::Failed);
+                    return;
+                }
             }
 
             *active += 1;

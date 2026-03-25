@@ -6,6 +6,7 @@ use tonic::Status;
 use crate::{
     proto::signer::v1::{
         FinalizeSessionResponse,
+        KeyGenerationResult,
         RoundMessage,
         StartKeyGenerationSessionRequest,
         StartSessionResponse,
@@ -61,7 +62,7 @@ impl CggmpControllerProtocol for KeyGenerationControllerDescriptor {
         data: &Self::Data,
         index: usize,
         node: &NodeIpcClient,
-    ) -> Result<(String, Vec<RoundMessage>), Status> {
+    ) -> Result<(String, Vec<RoundMessage>, Vec<u32>), Status> {
         let response: StartSessionResponse = node
             .start_key_generation(StartKeyGenerationSessionRequest {
                 key_identifier: data.key_identifier.clone(),
@@ -72,46 +73,68 @@ impl CggmpControllerProtocol for KeyGenerationControllerDescriptor {
             })
             .await?;
 
-        Ok((response.session_identifier, response.messages))
+        // Key generation has no signer set — return empty to skip
+        // cross-node consistency verification.
+        Ok((response.session_identifier, response.messages, Vec::new()))
     }
 
     /// Finalize all key generation sessions.
     ///
-    /// All nodes produce consistent outputs — only the first is used since
-    /// public key and public key package are identical across participants.
+    /// Collects results from all nodes and verifies that every node produced
+    /// the same public key before accepting the output. A mismatch indicates a
+    /// protocol execution fault and is surfaced as an error rather than
+    /// silently accepting a potentially incorrect key.
     ///
     /// # Errors
     /// * `Errors::InvalidMessage` - If any node returns an unexpected output
     ///   variant or no output is received.
+    /// * `Errors::InvalidKeyShare` - If nodes produced inconsistent public
+    ///   keys.
     fn finalize_output(
         data: &Self::Data,
         responses: Vec<FinalizeSessionResponse>,
     ) -> Result<ProtocolOutput, Errors> {
-        // Extract the first valid output — all nodes produce the same public
-        // key and public key package so subsequent results are redundant.
-        let final_output: FinalOutput = responses
+        // Collect all KeyGeneration results — every responding node must
+        // return this variant.
+        let results: Vec<KeyGenerationResult> = responses
             .into_iter()
-            .find_map(|response: FinalizeSessionResponse| {
-                response.final_output
+            .map(|response: FinalizeSessionResponse| {
+                match response.final_output {
+                    Some(FinalOutput::KeyGeneration(result)) => Ok(result),
+                    Some(other) => Err(Errors::InvalidMessage(format!(
+                        "Unexpected finalize output variant: {:?}",
+                        other
+                    ))),
+                    None => Err(Errors::InvalidMessage(
+                        "Node returned empty finalize output.".into(),
+                    )),
+                }
             })
-            .ok_or_else(|| {
+            .collect::<Result<Vec<KeyGenerationResult>, Errors>>()?;
+
+        let first: &KeyGenerationResult =
+            results.first().ok_or_else(|| {
                 Errors::InvalidMessage("No finalize output received.".into())
             })?;
 
-        match final_output {
-            FinalOutput::KeyGeneration(result) => {
-                Ok(ProtocolOutput::KeyGeneration {
-                    key_identifier: data.key_identifier.clone(),
-                    key_share: None,
-                    public_key: result.public_key,
-                    public_key_package: result.public_key_package,
-                })
-            },
-            other => Err(Errors::InvalidMessage(format!(
-                "Unexpected finalize output variant: {:?}",
-                other
-            ))),
+        // Verify all nodes agree on the public key — divergence indicates a
+        // bug in the protocol execution or a misconfigured node.
+        if !results.iter().all(|result: &KeyGenerationResult| {
+            result.public_key == first.public_key
+        }) {
+            return Err(Errors::InvalidKeyShare(
+                "Nodes produced inconsistent public keys — protocol \
+                execution may be corrupt."
+                    .into(),
+            ));
         }
+
+        Ok(ProtocolOutput::KeyGeneration {
+            key_identifier: data.key_identifier.clone(),
+            key_share: None,
+            public_key: first.public_key.clone(),
+            public_key_package: first.public_key_package.clone(),
+        })
     }
 }
 

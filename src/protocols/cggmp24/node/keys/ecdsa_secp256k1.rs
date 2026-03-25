@@ -30,7 +30,7 @@ use crate::{
             Round,
         },
     },
-    secrets::secret::Secret,
+    secrets::{secret::Secret, vault::key_path::scoped},
     transport::errors::Errors,
 };
 
@@ -120,10 +120,7 @@ impl CggmpNodeProtocol for KeyGenerationProtocolDescriptor {
         // Scope the key share under "<key_id>/<participant_id>" to avoid
         // Vault collisions across participants.
         Ok(ProtocolOutput::KeyGeneration {
-            key_identifier: format!(
-                "{}/{}",
-                data.key_identifier, data.identifier_u32
-            ),
+            key_identifier: scoped(&data.key_identifier, data.identifier_u32),
             key_share: Some(Secret::new(blob)),
             public_key,
             // Re-serialize the incomplete key share as the public key package

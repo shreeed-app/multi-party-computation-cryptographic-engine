@@ -37,7 +37,7 @@ impl LoggingEngine {
     pub fn init(service_name: &str) {
         let env_filter: EnvFilter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|error: FromEnvError| {
-                eprintln!(
+                tracing::warn!(
                     "Failed to initialize environment filter: {}",
                     error
                 );

@@ -122,7 +122,9 @@ impl SessionStore {
     /// Obtain a write lock, recovering from poison if necessary.
     ///
     /// Poisoning is treated as non-fatal in this context, as session
-    /// state can be safely recovered.
+    /// state can be safely recovered. A warning is emitted when poison is
+    /// detected — it signals a thread panicked while holding the lock, which
+    /// is worth surfacing even if the data is recoverable.
     ///
     /// # Arguments
     /// * `lock` (`&RwLock<T>`) - RwLock to lock.
@@ -132,7 +134,13 @@ impl SessionStore {
     pub fn write_guard<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
         match lock.write() {
             Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
+            Err(poisoned) => {
+                tracing::warn!(
+                    "Session store RwLock was poisoned — a thread likely \
+                    panicked while holding it. Recovering inner value."
+                );
+                poisoned.into_inner()
+            },
         }
     }
 }

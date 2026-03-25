@@ -30,6 +30,7 @@ use crate::{
     },
     protocols::{
         algorithm::Algorithm,
+        cggmp24::node::tasks::ecdsa_secp256k1::compute_parties,
         types::{
             AuxiliaryGenerationInit,
             DefaultAuxiliaryGenerationInit,
@@ -44,7 +45,13 @@ use crate::{
             SigningInit,
         },
     },
-    secrets::{types::KeyShare, vault::api::VaultProvider},
+    secrets::{
+        types::KeyShare,
+        vault::{
+            api::VaultProvider,
+            key_path::{base, scoped},
+        },
+    },
     service::api::EngineApi,
     transport::errors::Errors,
 };
@@ -116,20 +123,16 @@ impl<
                 },
             };
 
+        // Extract the base key identifier by removing the per-participant
+        // suffix appended by the controller (e.g. "my-key/0" → "my-key").
+        // This base key is used for signer set derivation and as the
+        // key_identifier in the protocol init.
+        let base_key_identifier: &str = base(&request.key_identifier);
+
         let init: ProtocolInit =
             ProtocolInit::Signing(SigningInit::Node(NodeSigningInit {
                 common: DefaultSigningInit {
-                    // Extract the base key identifier by removing any
-                    // auxiliary identifier from the key identifier. This
-                    // assumes that auxiliary identifiers are appended to the
-                    // base key identifier with a '/' separator, e.g., "key/X".
-                    key_identifier: request
-                        .key_identifier
-                        .clone()
-                        .rsplit_once('/')
-                        .map(|(base, _): (&str, &str)| base)
-                        .unwrap_or(&request.key_identifier)
-                        .into(),
+                    key_identifier: base_key_identifier.into(),
                     algorithm,
                     threshold: request.threshold,
                     participants: request.participants,
@@ -146,9 +149,26 @@ impl<
             Vec<RoundMessage>,
         ) = self.engine.start_session(init).await?;
 
+        // For CGGMP24 signing, compute the signer set so the controller can
+        // verify all nodes independently derived the same participants.
+        let signer_set: Vec<u32> =
+            if algorithm == Algorithm::Cggmp24EcdsaSecp256k1 {
+                compute_parties(
+                    base_key_identifier,
+                    request.threshold,
+                    request.participants,
+                )?
+                .into_iter()
+                .map(|participant_id: u16| participant_id as u32)
+                .collect()
+            } else {
+                Vec::new()
+            };
+
         Ok(Response::new(StartSessionResponse {
             session_identifier: session_identifier.to_string(),
             messages: round_message,
+            signer_set,
         }))
     }
 
@@ -207,6 +227,7 @@ impl<
         Ok(Response::new(StartSessionResponse {
             session_identifier: session_identifier.to_string(),
             messages: round_message,
+            signer_set: Vec::new(),
         }))
     }
 
@@ -246,7 +267,7 @@ impl<
         // Retrieve the incomplete key share from vault using the key
         // identifier and the auxiliary identifier.
         let vault_key: String =
-            format!("{}/{}", request.key_identifier, request.identifier);
+            scoped(&request.key_identifier, request.identifier);
         let incomplete_key_share: KeyShare =
             self.vault.get_key_share(&vault_key).await?;
 
@@ -270,6 +291,7 @@ impl<
         Ok(Response::new(StartSessionResponse {
             session_identifier: session_identifier.to_string(),
             messages,
+            signer_set: Vec::new(),
         }))
     }
 

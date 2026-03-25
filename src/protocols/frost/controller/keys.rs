@@ -394,12 +394,13 @@ impl FrostControllerKeyGeneration {
         // in broadcast_round2.
         results
             .into_iter()
-            .map(|(sender, packages): (u32, Vec<(u32, Vec<u8>)>)| {
-                packages.into_iter().map(move |(recipient, package)| {
-                    (recipient, sender, package)
-                })
+            .flat_map(|(sender, packages): (u32, Vec<(u32, Vec<u8>)>)| {
+                packages.into_iter().map(
+                    move |(recipient, package): (u32, Vec<u8>)| {
+                        (recipient, sender, package)
+                    },
+                )
             })
-            .flatten()
             .for_each(|(recipient, sender, package): (u32, u32, Vec<u8>)| {
                 self.round2_packages
                     .entry(recipient)
@@ -534,19 +535,23 @@ impl FrostControllerKeyGeneration {
 
         // All nodes must produce the same public key and public key package —
         // any mismatch indicates a protocol error or tampering.
-        if !public_keys
-            .windows(2)
-            .all(|window: &[&Vec<u8>]| window[0] == window[1])
-        {
+        if !public_keys.windows(2).all(|window: &[&Vec<u8>]| {
+            match (window.first(), window.get(1)) {
+                (Some(a), Some(b)) => a == b,
+                _ => false, // This case is impossible.
+            }
+        }) {
             return Err(Errors::InvalidState(
                 "Public key mismatch across nodes.".into(),
             ));
         }
 
-        if !public_key_packages
-            .windows(2)
-            .all(|window: &[&Vec<u8>]| window[0] == window[1])
-        {
+        if !public_key_packages.windows(2).all(|window: &[&Vec<u8>]| {
+            match (window.first(), window.get(1)) {
+                (Some(a), Some(b)) => a == b,
+                _ => false, // This case is impossible.
+            }
+        }) {
             return Err(Errors::InvalidState(
                 "Public key package mismatch across nodes.".into(),
             ));

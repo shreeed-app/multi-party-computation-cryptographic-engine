@@ -64,7 +64,7 @@ impl CggmpControllerProtocol for AuxiliaryGenerationControllerDescriptor {
         data: &Self::Data,
         index: usize,
         node: &NodeIpcClient,
-    ) -> Result<(String, Vec<RoundMessage>), Status> {
+    ) -> Result<(String, Vec<RoundMessage>, Vec<u32>), Status> {
         let response: StartSessionResponse = node
             .start_auxiliary_generation(
                 StartAuxiliaryGenerationSessionRequest {
@@ -76,7 +76,9 @@ impl CggmpControllerProtocol for AuxiliaryGenerationControllerDescriptor {
             )
             .await?;
 
-        Ok((response.session_identifier, response.messages))
+        // Auxiliary generation has no signer set — return empty to skip
+        // cross-node consistency verification.
+        Ok((response.session_identifier, response.messages, Vec::new()))
     }
 
     /// Finalize all aux gen sessions.

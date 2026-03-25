@@ -27,6 +27,7 @@ use crate::{
             SigningInit,
         },
     },
+    secrets::vault::key_path::scoped,
     transport::{errors::Errors, grpc::node_client::NodeIpcClient},
 };
 
@@ -58,20 +59,18 @@ impl CggmpControllerProtocol for SigningControllerDescriptor {
     ///
     /// Each node receives a scoped key identifier
     /// (`<key_id>/<participant_index>`) to locate its key share in Vault.
+    /// The node's reported signer set is returned so `start_sessions` can
+    /// verify cross-node consistency.
     async fn start_session(
         data: &Self::Data,
         index: usize,
         node: &NodeIpcClient,
-    ) -> Result<(String, Vec<RoundMessage>), Status> {
+    ) -> Result<(String, Vec<RoundMessage>, Vec<u32>), Status> {
         let response: StartSessionResponse = node
             .start_signing(StartSigningSessionRequest {
                 // Scope the key identifier per participant to locate the
                 // correct key share in Vault.
-                key_identifier: format!(
-                    "{}/{}",
-                    data.key_identifier.trim_end_matches('/'),
-                    index
-                ),
+                key_identifier: scoped(&data.key_identifier, index as u32),
                 algorithm: data.algorithm.as_str().to_string(),
                 threshold: data.threshold,
                 participants: data.participants,
@@ -79,7 +78,11 @@ impl CggmpControllerProtocol for SigningControllerDescriptor {
             })
             .await?;
 
-        Ok((response.session_identifier, response.messages))
+        Ok((
+            response.session_identifier,
+            response.messages,
+            response.signer_set,
+        ))
     }
 
     /// Finalize all signing sessions.

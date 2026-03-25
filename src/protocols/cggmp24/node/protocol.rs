@@ -204,24 +204,24 @@ where
         // try_recv avoids blocking since the worker may still be running.
         // Re-drain outgoing after capturing done signal — the worker may have
         // sent final messages just before signaling completion.
-        if self.worker_done.is_none() {
-            if let Ok(done) = self.done_receiver.try_recv() {
-                self.worker_done = Some(done);
-                // Drain any final messages flushed just before the done
-                // signal.
-                while let Ok(batch) = self.outgoing_receiver.try_recv() {
-                    let wrapped_batch: Vec<RoundMessage> = batch
-                        .into_iter()
-                        .map(
-                            |outgoing: Outgoing<
-                                <P as CggmpNodeProtocol>::Message,
-                            >| {
-                                self.wrap_outgoing(outgoing)
-                            },
-                        )
-                        .collect::<Result<Vec<RoundMessage>, Errors>>()?;
-                    self.pending_messages.extend(wrapped_batch);
-                }
+        if self.worker_done.is_none()
+            && let Ok(done) = self.done_receiver.try_recv()
+        {
+            self.worker_done = Some(done);
+            // Drain any final messages flushed just before the done
+            // signal.
+            while let Ok(batch) = self.outgoing_receiver.try_recv() {
+                let wrapped_batch: Vec<RoundMessage> = batch
+                    .into_iter()
+                    .map(
+                        |outgoing: Outgoing<
+                            <P as CggmpNodeProtocol>::Message,
+                        >| {
+                            self.wrap_outgoing(outgoing)
+                        },
+                    )
+                    .collect::<Result<Vec<RoundMessage>, Errors>>()?;
+                self.pending_messages.extend(wrapped_batch);
             }
         }
 

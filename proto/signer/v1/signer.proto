@@ -161,6 +161,11 @@ message StartSessionResponse {
   string session_identifier = 1;
   /// Round 0 messages to be delivered to other participants.
   repeated RoundMessage messages = 2;
+  /// Signer set derived by the node for CGGMP24 signing sessions.
+  /// Contains the participant indices selected for signing, in sorted order.
+  /// Empty for key generation, auxiliary generation, and non-CGGMP24 signing.
+  /// The controller uses this to verify all nodes computed the same set.
+  repeated uint32 signer_set = 3;
 }
 
 /// Request to deliver a round message to a node.

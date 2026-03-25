@@ -57,13 +57,16 @@ pub trait CggmpControllerProtocol: Send + 'static {
     /// * `Status` - If the gRPC call fails.
     ///
     /// # Returns
-    /// * `(String, Vec<RoundMessage>)` - The session identifier and initial
-    ///   outgoing messages from the node.
+    /// * `(String, Vec<RoundMessage>, Vec<u32>)` - The session identifier,
+    ///   initial outgoing messages, and the signer set derived by the node
+    ///   (empty for non-signing protocols or non-CGGMP24 algorithms).
     fn start_session(
         data: &Self::Data,
         index: usize,
         node: &NodeIpcClient,
-    ) -> impl Future<Output = Result<(String, Vec<RoundMessage>), Status>> + Send;
+    ) -> impl Future<
+        Output = Result<(String, Vec<RoundMessage>, Vec<u32>), Status>,
+    > + Send;
 
     /// Finalize all node sessions and extract the protocol output.
     ///
@@ -134,8 +137,15 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
     /// Responses are sorted by participant index before registering sessions
     /// to guarantee a consistent ordering in `self.sessions`.
     ///
+    /// For CGGMP24 signing, each node reports the signer set it derived
+    /// locally. This function verifies that all reported sets are identical —
+    /// a mismatch indicates a configuration inconsistency that would cause the
+    /// protocol to fail non-deterministically.
+    ///
     /// # Errors
     /// * `Errors::Generic` - If any gRPC session start request fails.
+    /// * `Errors::InvalidParticipant` - If nodes derived inconsistent signer
+    ///   sets.
     ///
     /// # Returns
     /// * `VecDeque<RoundMessage>` - Initial message queue from all nodes.
@@ -146,12 +156,18 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
         // n nodes.
         let futures: impl Iterator<
             Item = impl Future<
-                Output = (usize, Result<(String, Vec<RoundMessage>), Status>),
+                Output = (
+                    usize,
+                    Result<(String, Vec<RoundMessage>, Vec<u32>), Status>,
+                ),
             >,
         > = self.nodes.iter().enumerate().map(
             |(index, node): (usize, &NodeIpcClient)| {
                 let future: impl Future<
-                    Output = Result<(String, Vec<RoundMessage>), Status>,
+                    Output = Result<
+                        (String, Vec<RoundMessage>, Vec<u32>),
+                        Status,
+                    >,
                 > = C::start_session(&self.data, index, node);
                 async move { (index, future.await) }
             },
@@ -159,7 +175,7 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
 
         let mut responses: Vec<(
             usize,
-            Result<(String, Vec<RoundMessage>), Status>,
+            Result<(String, Vec<RoundMessage>, Vec<u32>), Status>,
         )> = join_all(futures).await;
 
         // Sort by index to ensure sessions are registered in participant
@@ -167,38 +183,69 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
         responses.sort_by_key(
             |(index, _): &(
                 usize,
-                Result<(String, Vec<RoundMessage>), Status>,
+                Result<(String, Vec<RoundMessage>, Vec<u32>), Status>,
             )| { *index },
         );
 
-        responses.into_iter().try_fold(
-            VecDeque::new(),
-            |mut queue: VecDeque<RoundMessage>,
-             (index, result): (
-                usize,
-                Result<(String, Vec<RoundMessage>), Status>,
-            )| {
-                let (session_identifier, messages): (
-                    String,
-                    Vec<RoundMessage>,
-                ) = result.map_err(map_status)?;
+        let (queue, signer_sets): (VecDeque<RoundMessage>, Vec<Vec<u32>>) =
+            responses.into_iter().try_fold(
+                (VecDeque::new(), Vec::new()),
+                |(mut queue, mut signer_sets): (
+                    VecDeque<RoundMessage>,
+                    Vec<Vec<u32>>,
+                ),
+                 (index, result): (
+                    usize,
+                    Result<(String, Vec<RoundMessage>, Vec<u32>), Status>,
+                )| {
+                    let (session_identifier, messages, signer_set): (
+                        String,
+                        Vec<RoundMessage>,
+                        Vec<u32>,
+                    ) = result.map_err(map_status)?;
 
-                // Register the session identifier for this node — used by
-                // submit_batch and collect_round to route messages.
-                self.sessions.push(session_identifier);
+                    // Register the session identifier for this node — used by
+                    // submit_batch and collect_round to route messages.
+                    self.sessions.push(session_identifier);
 
-                // Tag each message with the sender's participant index —
-                // required for routing in build_submit_requests.
-                queue.extend(messages.into_iter().map(
-                    |mut message: RoundMessage| {
-                        message.from = Some(index as u32);
-                        message
-                    },
-                ));
+                    // Tag each message with the sender's participant index —
+                    // required for routing in build_submit_requests.
+                    queue.extend(messages.into_iter().map(
+                        |mut message: RoundMessage| {
+                            message.from = Some(index as u32);
+                            message
+                        },
+                    ));
 
-                Ok(queue)
-            },
-        )
+                    // Collect non-empty signer sets for consistency
+                    // verification after all sessions are started.
+                    if !signer_set.is_empty() {
+                        signer_sets.push(signer_set);
+                    }
+
+                    Ok::<(VecDeque<RoundMessage>, Vec<Vec<u32>>), Errors>((
+                        queue,
+                        signer_sets,
+                    ))
+                },
+            )?;
+
+        // Verify all nodes derived the same signer set. A mismatch means at
+        // least one node used different inputs (e.g. different key_identifier
+        // or participant count) and would fail the protocol with an opaque
+        // error rather than a clear diagnostic.
+        if let Some(first) = signer_sets.first()
+            && !signer_sets.iter().all(|set: &Vec<u32>| set == first)
+        {
+            return Err(Errors::InvalidParticipant(
+                "Nodes computed inconsistent signer sets — verify that \
+                    all nodes share the same key_identifier, threshold, and \
+                    participant count."
+                    .into(),
+            ));
+        }
+
+        Ok(queue)
     }
 
     /// Build the list of `SubmitRoundRequest`s for a batch of outgoing
@@ -353,10 +400,10 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
                         result.map_err(map_status)?;
 
                     // Mark the node as done if it signals completion.
-                    if response.done {
-                        if let Some(slot) = all_done.get_mut(index) {
-                            *slot = true;
-                        }
+                    if response.done
+                        && let Some(slot) = all_done.get_mut(index)
+                    {
+                        *slot = true;
                     }
 
                     queue.extend(response.messages);

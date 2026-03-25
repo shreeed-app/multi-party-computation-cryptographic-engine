@@ -62,7 +62,7 @@ pub trait FrostControllerSigningCurve: Send + Sync + 'static {
     /// Create a FROST Identifier from a u16.
     ///
     /// # Arguments
-    /// * `identifier` (`u16`) - The identifier to convert.
+    /// * `id` (`u16`) - The identifier to convert.
     ///
     /// # Errors
     /// * `Errors::InvalidParticipant` - If the identifier cannot be converted
@@ -383,6 +383,7 @@ where
             .collect::<Result<Vec<u32>, Errors>>()?;
 
         identifiers.sort();
+
         // Validate the count of unique identifiers matches the expected number
         // of participants.
         if identifiers.len() != self.participants as usize {
@@ -445,6 +446,89 @@ where
         )?)
     }
 
+    /// Decode a `FrostWire::Commitments` message and return the typed
+    /// identifier-commitment pair.
+    ///
+    /// Extracted to keep `collect_commitments` free of inline match arms.
+    ///
+    /// # Arguments
+    /// * `payload` (`&[u8]`) - Raw wire payload from the round 0 response.
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` - If the wire message cannot be decoded or
+    ///   is not of the expected `Commitments` variant.
+    /// * `Errors::InvalidParticipant` - If the identifier cannot be converted.
+    ///
+    /// # Returns
+    /// * `(FrostIdentifier<C::Curve>, FrostSigningCommitments<C::Curve>)` -
+    ///   The typed identifier-commitment pair extracted from the wire message.
+    fn decode_commitment_message(
+        payload: &[u8],
+    ) -> Result<
+        (FrostIdentifier<C::Curve>, FrostSigningCommitments<C::Curve>),
+        Errors,
+    > {
+        match decode_wire(payload).map_err(|error: Errors| {
+            Errors::InvalidMessage(format!(
+                "Failed to decode FROST wire message: {}.",
+                error
+            ))
+        })? {
+            FrostWire::Commitments { identifier, commitments } => {
+                let frost_identifier: FrostIdentifier<C::Curve> =
+                    Self::identifier_from_u32(identifier)?;
+                let signing_commitments: FrostSigningCommitments<C::Curve> =
+                    C::deserialize_commitments(&commitments)?;
+                Ok((frost_identifier, signing_commitments))
+            },
+            _ => Err(Errors::InvalidMessage(
+                "Unexpected wire message type in round 0.".into(),
+            )),
+        }
+    }
+
+    /// Decode a `FrostWire::SignatureShare` message and return the typed
+    /// identifier-share pair.
+    ///
+    /// Extracted to keep `broadcast_signing_package` free of inline match
+    /// arms.
+    ///
+    /// # Arguments
+    /// * `payload` (`&[u8]`) - Raw wire payload from the round 1 response.
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` - If the wire message cannot be decoded or
+    ///   is not of the expected `SignatureShare` variant.
+    /// * `Errors::InvalidParticipant` - If the identifier cannot be converted.
+    ///
+    /// # Returns
+    /// * `(FrostIdentifier<C::Curve>, FrostSignatureShare<C::Curve>)` - The
+    ///   typed identifier-share pair extracted from the wire message.
+    fn decode_signature_share_message(
+        payload: &[u8],
+    ) -> Result<
+        (FrostIdentifier<C::Curve>, FrostSignatureShare<C::Curve>),
+        Errors,
+    > {
+        match decode_wire(payload).map_err(|error: Errors| {
+            Errors::InvalidMessage(format!(
+                "Failed to decode FROST wire message: {}",
+                error
+            ))
+        })? {
+            FrostWire::SignatureShare { identifier, signature_share } => {
+                let frost_identifier: FrostIdentifier<C::Curve> =
+                    Self::identifier_from_u32(identifier)?;
+                let share: FrostSignatureShare<C::Curve> =
+                    C::deserialize_signature_share(&signature_share)?;
+                Ok((frost_identifier, share))
+            },
+            _ => Err(Errors::InvalidMessage(
+                "Unexpected wire message type in round 1.".into(),
+            )),
+        }
+    }
+
     /// Start signing sessions on all nodes in parallel and collect their
     /// round 0 commitments.
     ///
@@ -456,46 +540,54 @@ where
     ///   invalid.
     /// * `Errors::InvalidMessage` - If a response cannot be decoded.
     async fn collect_commitments(&mut self) -> Result<(), Errors> {
-        let identifiers: Vec<u32> = self.node_identifiers()?;
+        let futures: FuturesUnordered<_> = self
+            .node_identifiers()?
+            .into_iter()
+            .map(|identifier: u32| {
+                let node: NodeIpcClient = self.node_clone(identifier)?;
+                let request: StartSigningSessionRequest =
+                    StartSigningSessionRequest {
+                        // Scoped key identifier for Vault lookup on the node.
+                        key_identifier: format!(
+                            "{}/{}",
+                            self.key_identifier.trim_end_matches('/'),
+                            identifier
+                        ),
+                        algorithm: self.algorithm.as_str().to_string(),
+                        threshold: self.threshold,
+                        participants: self.participants,
+                        message: self.message.clone(),
+                    };
 
-        let mut futures: FuturesUnordered<
-            impl Future<Output = Result<(u32, StartSessionResponse), Errors>>,
-        > = FuturesUnordered::new();
+                Ok(async move {
+                    let response: StartSessionResponse = node
+                        .start_signing(request)
+                        .await
+                        .map_err(map_status)?;
+                    Ok::<(u32, StartSessionResponse), Errors>((
+                        identifier, response,
+                    ))
+                })
+            })
+            .collect::<Result<FuturesUnordered<_>, Errors>>()?;
 
-        for identifier in identifiers {
-            let node: NodeIpcClient = self.node_clone(identifier)?;
+        let results: Vec<(u32, StartSessionResponse)> = futures
+            .collect::<Vec<Result<_, _>>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
 
-            let request: StartSigningSessionRequest =
-                StartSigningSessionRequest {
-                    // Scoped key identifier for Vault lookup on the node.
-                    key_identifier: format!(
-                        "{}/{}",
-                        self.key_identifier.trim_end_matches('/'),
-                        identifier
-                    ),
-                    algorithm: self.algorithm.as_str().to_string(),
-                    threshold: self.threshold,
-                    participants: self.participants,
-                    message: self.message.clone(),
-                };
+        self.sessions = results
+            .iter()
+            .map(|(identifier, response): &(u32, StartSessionResponse)| {
+                (*identifier, response.session_identifier.clone())
+            })
+            .collect();
 
-            futures.push(async move {
-                let response: StartSessionResponse =
-                    node.start_signing(request).await.map_err(map_status)?;
-                Ok::<(u32, StartSessionResponse), Errors>((
-                    identifier, response,
-                ))
-            });
-        }
-
-        while let Some(result) = futures.next().await {
-            let (identifier, response): (u32, StartSessionResponse) = result?;
-
-            self.sessions.insert(identifier, response.session_identifier);
-
-            // Each node returns exactly one commitment in its round 0 message.
-            let wire: FrostWire = decode_wire(
-                &response
+        self.commitments = results
+            .iter()
+            .map(|(_, response): &(u32, StartSessionResponse)| {
+                let payload: &[u8] = &response
                     .messages
                     .first()
                     .ok_or_else(|| {
@@ -505,30 +597,10 @@ where
                                 .into(),
                         )
                     })?
-                    .payload,
-            )
-            .map_err(|error: Errors| {
-                Errors::InvalidMessage(format!(
-                    "Failed to decode FROST wire message: {}.",
-                    error
-                ))
-            })?;
-
-            match wire {
-                FrostWire::Commitments { identifier: id_u32, commitments } => {
-                    let frost_identifier: FrostIdentifier<C::Curve> =
-                        Self::identifier_from_u32(id_u32)?;
-                    let commitments: FrostSigningCommitments<C::Curve> =
-                        C::deserialize_commitments(&commitments)?;
-                    self.commitments.insert(frost_identifier, commitments);
-                },
-                _ => {
-                    return Err(Errors::InvalidMessage(
-                        "Unexpected wire message type in round 0.".into(),
-                    ));
-                },
-            }
-        }
+                    .payload;
+                Self::decode_commitment_message(payload)
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
 
         Ok(())
     }
@@ -556,75 +628,48 @@ where
             signing_package: C::serialize_signing_package(&signing_package)?,
         })?;
 
-        let mut futures: FuturesUnordered<
-            impl Future<
-                Output = Result<
-                    (FrostIdentifier<C::Curve>, FrostSignatureShare<C::Curve>),
-                    Errors,
-                >,
-            >,
-        > = FuturesUnordered::new();
+        let futures: FuturesUnordered<_> = self
+            .sessions
+            .iter()
+            .map(|(&identifier, session_identifier): (&u32, &String)| {
+                let node: NodeIpcClient = self.node_clone(identifier)?;
+                let payload: Vec<u8> = payload.clone();
+                let session_identifier: String = session_identifier.clone();
 
-        for (&identifier, session_identifier) in &self.sessions {
-            let node: NodeIpcClient = self.node_clone(identifier)?;
-            let payload: Vec<u8> = payload.clone();
+                Ok(async move {
+                    let response: SubmitRoundResponse = node
+                        .submit_round(SubmitRoundRequest {
+                            session_identifier,
+                            round: 1,
+                            from: None,
+                            to: Some(identifier),
+                            payload,
+                        })
+                        .await
+                        .map_err(map_status)?;
 
-            futures.push(async move {
-                let response: SubmitRoundResponse = node
-                    .submit_round(SubmitRoundRequest {
-                        session_identifier: session_identifier.clone(),
-                        round: 1,
-                        from: None,
-                        to: Some(identifier),
-                        payload,
-                    })
-                    .await
-                    .map_err(map_status)?;
-
-                let wire: FrostWire = decode_wire(
-                    &response
+                    let payload: &[u8] = &response
                         .messages
                         .first()
                         .ok_or_else(|| {
                             Errors::InvalidMessage(
-                            "Missing signature share in submit round response."
-                                .into(),
-                        )
+                                "Missing signature share in submit round \
+                                response."
+                                    .into(),
+                            )
                         })?
-                        .payload,
-                )
-                .map_err(|error: Errors| {
-                    Errors::InvalidMessage(format!(
-                        "Failed to decode FROST wire message: {}",
-                        error
-                    ))
-                })?;
+                        .payload;
 
-                match wire {
-                    FrostWire::SignatureShare {
-                        identifier: id_u32,
-                        signature_share,
-                    } => {
-                        let frost_identifier: FrostIdentifier<C::Curve> =
-                            Self::identifier_from_u32(id_u32)?;
-                        let share: FrostSignatureShare<C::Curve> =
-                            C::deserialize_signature_share(&signature_share)?;
-                        Ok((frost_identifier, share))
-                    },
-                    _ => Err(Errors::InvalidMessage(
-                        "Unexpected wire message type in round 1.".into(),
-                    )),
-                }
-            });
-        }
+                    Self::decode_signature_share_message(payload)
+                })
+            })
+            .collect::<Result<FuturesUnordered<_>, Errors>>()?;
 
-        while let Some(result) = futures.next().await {
-            let (identifier, share): (
-                FrostIdentifier<C::Curve>,
-                FrostSignatureShare<C::Curve>,
-            ) = result?;
-            self.shares.insert(identifier, share);
-        }
+        self.shares = futures
+            .collect::<Vec<Result<_, _>>>()
+            .await
+            .into_iter()
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
 
         Ok(signing_package)
     }

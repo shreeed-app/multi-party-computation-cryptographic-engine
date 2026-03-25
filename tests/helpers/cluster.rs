@@ -1,3 +1,5 @@
+use std::{future::pending, thread::spawn};
+
 use app::{
     config::{
         controller::{ControllerRuntimeConfig, NodeConfig},
@@ -12,7 +14,8 @@ use app::{
 };
 use futures::future::join_all;
 use tokio::{
-    spawn,
+    runtime::Builder,
+    spawn as tokio_spawn,
     sync::{
         OnceCell,
         oneshot::{Receiver, Sender, channel},
@@ -51,7 +54,7 @@ pub async fn spawn_node(index: usize) -> Receiver<()> {
         vault: vault_config(),
     };
 
-    spawn(async move {
+    tokio_spawn(async move {
         NodeRuntime::run(config, ready_transmitter).await.unwrap();
     });
 
@@ -89,7 +92,7 @@ pub async fn spawn_controller() -> Receiver<()> {
         nodes,
     };
 
-    spawn(async move {
+    tokio_spawn(async move {
         ControllerRuntime::run(config, ready_transmitter).await.unwrap();
     });
 
@@ -113,14 +116,46 @@ pub async fn start_cluster_once() {
 
             let cluster_config: &ClusterConfig = ClusterConfig::get();
 
-            let node_receivers: Vec<Receiver<()>> =
-                join_all((0..cluster_config.node_count).map(spawn_node)).await;
+            // Spawn the cluster in a dedicated OS thread with its own
+            // long-lived Tokio runtime — decoupled from any test runtime
+            // so it survives across all tests in the binary.
+            let (ready_transmitter, ready_receiver): (
+                Sender<()>,
+                Receiver<()>,
+            ) = channel::<()>();
 
-            for ready_receiver in node_receivers {
-                ready_receiver.await.unwrap();
-            }
+            spawn(move || {
+                Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async move {
+                        let node_receivers: Vec<Receiver<()>> = join_all(
+                            (0..cluster_config.node_count).map(spawn_node),
+                        )
+                        .await;
 
-            spawn_controller().await.await.unwrap();
+                        join_all(node_receivers.into_iter().map(
+                            |ready_receiver: Receiver<()>| async move {
+                                ready_receiver.await.unwrap();
+                            },
+                        ))
+                        .await;
+
+                        let controller_receiver: Receiver<()> =
+                            spawn_controller().await;
+
+                        controller_receiver.await.unwrap();
+
+                        let _ = ready_transmitter.send(());
+
+                        // Block forever to keep nodes and controller alive.
+                        pending::<()>().await;
+                    });
+            });
+
+            // Wait until the cluster signals it is ready before returning.
+            ready_receiver.await.unwrap();
         })
         .await;
 }

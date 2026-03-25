@@ -255,14 +255,12 @@ pub trait FrostCurve: Send + Sync + 'static {
     fn serialize_round2_package(
         package: &Round2Package<Self::Curve>,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package).map(|value: Vec<u8>| value).map_err(
-            |error: PostcardError| {
-                Errors::InvalidMessage(format!(
-                    "Failed to serialize round 2 package: {}",
-                    error
-                ))
-            },
-        )
+        to_allocvec(package).map_err(|error: PostcardError| {
+            Errors::InvalidMessage(format!(
+                "Failed to serialize round 2 package: {}",
+                error
+            ))
+        })
     }
 
     /// Deserialize a round 2 package from postcard bytes.
@@ -300,14 +298,12 @@ pub trait FrostCurve: Send + Sync + 'static {
     fn serialize_key_package(
         package: &FrostKeyPackage<Self::Curve>,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package).map(|v: Vec<u8>| v).map_err(
-            |error: PostcardError| {
-                Errors::InvalidMessage(format!(
-                    "Failed to serialize key package: {}",
-                    error
-                ))
-            },
-        )
+        to_allocvec(package).map_err(|error: PostcardError| {
+            Errors::InvalidMessage(format!(
+                "Failed to serialize key package: {}",
+                error
+            ))
+        })
     }
 
     /// Serialize a public key package to postcard bytes.
@@ -324,14 +320,12 @@ pub trait FrostCurve: Send + Sync + 'static {
     fn serialize_public_key_package(
         package: &FrostPublicKeyPackage<Self::Curve>,
     ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package).map(|v: Vec<u8>| v).map_err(
-            |error: PostcardError| {
-                Errors::InvalidMessage(format!(
-                    "Failed to serialize public key package: {}",
-                    error
-                ))
-            },
-        )
+        to_allocvec(package).map_err(|error: PostcardError| {
+            Errors::InvalidMessage(format!(
+                "Failed to serialize public key package: {}",
+                error
+            ))
+        })
     }
 
     /// Extract the raw verifying key bytes from a public key package.
@@ -480,6 +474,122 @@ where
             },
         )?)
     }
+
+    /// Ingest a set of round 1 packages from peers, skipping our own entry,
+    /// and populate `received_round1` and `identifier_map`.
+    ///
+    /// # Arguments
+    /// * `packages` (`Vec<(u32, Vec<u8>)>`) - Pairs of (sender_u32, bytes).
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` - If any package cannot be deserialized or
+    ///   its identifier cannot be converted.
+    fn ingest_round1_packages(
+        &mut self,
+        packages: Vec<(u32, Vec<u8>)>,
+    ) -> Result<(), Errors> {
+        packages
+            .into_iter()
+            // Skip our own package — we don't process messages from ourselves.
+            .filter(|(from_u32, _): &(u32, Vec<u8>)| {
+                *from_u32 != self.identifier_u32
+            })
+            .try_for_each(|(from_u32, bytes): (u32, Vec<u8>)| {
+                let from_identifier: FrostIdentifier<C::Curve> =
+                    Self::identifier_from_u32(from_u32)?;
+
+                // Record the mapping from FROST Identifier to u32 —
+                // needed in round 2 to route packages to their targets.
+                self.identifier_map.insert(from_identifier, from_u32);
+
+                let package: Round1Package<C::Curve> =
+                    C::deserialize_round1_package(&bytes)?;
+
+                self.received_round1.insert(from_identifier, package);
+
+                Ok(())
+            })
+    }
+
+    /// Ingest a set of round 2 packages from peers, skipping our own entry,
+    /// and populate `received_round2` and `identifier_map`.
+    ///
+    /// # Arguments
+    /// * `packages` (`Vec<(u32, Vec<u8>)>`) - Pairs of (sender_u32, bytes).
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` - If any package cannot be deserialized or
+    ///   its identifier cannot be converted.
+    fn ingest_round2_packages(
+        &mut self,
+        packages: Vec<(u32, Vec<u8>)>,
+    ) -> Result<(), Errors> {
+        packages
+            .into_iter()
+            // Skip our own package — we don't process messages from ourselves.
+            .filter(|(from_u32, _): &(u32, Vec<u8>)| {
+                *from_u32 != self.identifier_u32
+            })
+            .try_for_each(|(from_u32, bytes): (u32, Vec<u8>)| {
+                let from_identifier: FrostIdentifier<C::Curve> =
+                    Self::identifier_from_u32(from_u32)?;
+
+                self.identifier_map.insert(from_identifier, from_u32);
+
+                let package: Round2Package<C::Curve> =
+                    C::deserialize_round2_package(&bytes)?;
+
+                self.received_round2.insert(from_identifier, package);
+
+                Ok(())
+            })
+    }
+
+    /// Serialize the round 2 output packages into wire-format pairs.
+    ///
+    /// Maps each `(FrostIdentifier, Round2Package)` produced by `part2` into
+    /// a `(to_u32, bytes)` pair using `identifier_map` for routing.
+    ///
+    /// # Arguments
+    /// * `round2_output` (`BTreeMap<FrostIdentifier<C::Curve>,
+    ///   Round2Package<C::Curve>>`) - Output packages from `part2`.
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` - If any package cannot be serialized or its
+    ///   target identifier is missing from `identifier_map`.
+    ///
+    /// # Returns
+    /// * `Vec<(u32, Vec<u8>)>` - Wire-format pairs ready for broadcast.
+    fn build_round2_output(
+        &self,
+        round2_output: BTreeMap<
+            FrostIdentifier<C::Curve>,
+            Round2Package<C::Curve>,
+        >,
+    ) -> Result<Vec<(u32, Vec<u8>)>, Errors> {
+        round2_output
+            .into_iter()
+            .map(
+                |(to_identifier, package): (
+                    FrostIdentifier<C::Curve>,
+                    Round2Package<C::Curve>,
+                )| {
+                    let to_u32: u32 = *self
+                        .identifier_map
+                        .get(&to_identifier)
+                        .ok_or_else(|| {
+                            Errors::InvalidMessage(
+                                "Missing identifier mapping for round 2 \
+                                package."
+                                    .into(),
+                            )
+                        })?;
+
+                    Ok((to_u32, C::serialize_round2_package(&package)?))
+                },
+            )
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -603,21 +713,9 @@ where
                         Errors::InvalidState("Missing round 1 secret.".into())
                     })?;
 
-                for (from_u32, bytes) in packages {
-                    if from_u32 == self.identifier_u32 {
-                        continue;
-                    }
-
-                    let from_identifier: FrostIdentifier<C::Curve> =
-                        Self::identifier_from_u32(from_u32)?;
-
-                    self.identifier_map.insert(from_identifier, from_u32);
-
-                    let package: Round1Package<C::Curve> =
-                        C::deserialize_round1_package(&bytes)?;
-
-                    self.received_round1.insert(from_identifier, package);
-                }
+                // Ingest all peers' round 1 packages into `received_round1`
+                // and populate `identifier_map` for routing in round 2.
+                self.ingest_round1_packages(packages)?;
 
                 let expected: usize =
                     (self.participants as usize).saturating_sub(1);
@@ -640,24 +738,10 @@ where
 
                 self.round2_secret = Some(round2_secret);
 
-                let mut packages: Vec<(u32, Vec<u8>)> = Vec::new();
-                for (to_identifier, package) in round2_output {
-                    let to_u32: u32 = *self
-                        .identifier_map
-                        .get(&to_identifier)
-                        .ok_or_else(|| {
-                            Errors::InvalidMessage(
-                                "Missing identifier mapping for round 2 \
-                                package."
-                                    .into(),
-                            )
-                        })?;
-
-                    packages.push((
-                        to_u32,
-                        C::serialize_round2_package(&package)?,
-                    ));
-                }
+                // Serialize round 2 output packages and resolve their target
+                // u32 identifiers using `identifier_map`.
+                let packages: Vec<(u32, Vec<u8>)> =
+                    self.build_round2_output(round2_output)?;
 
                 self.round = 2;
 
@@ -672,26 +756,16 @@ where
             },
 
             (2, 2, FrostWire::DkgRound2Packages { packages }) => {
-                let secret: &Round2SecretPackage<C::Curve> =
-                    self.round2_secret.as_ref().ok_or_else(|| {
+                // Take the secret temporarily — released before the mutable
+                // borrow in ingest_round2_packages to avoid a
+                // simultaneous borrow conflict.
+                let secret: Round2SecretPackage<C::Curve> =
+                    self.round2_secret.take().ok_or_else(|| {
                         Errors::InvalidState("Missing round 2 secret.".into())
                     })?;
 
-                for (from_u32, bytes) in packages {
-                    if from_u32 == self.identifier_u32 {
-                        continue;
-                    }
-
-                    let from_identifier: FrostIdentifier<C::Curve> =
-                        Self::identifier_from_u32(from_u32)?;
-
-                    self.identifier_map.insert(from_identifier, from_u32);
-
-                    let package: Round2Package<C::Curve> =
-                        C::deserialize_round2_package(&bytes)?;
-
-                    self.received_round2.insert(from_identifier, package);
-                }
+                // Ingest all peers' round 2 packages into `received_round2`.
+                self.ingest_round2_packages(packages)?;
 
                 let expected: usize =
                     (self.participants as usize).saturating_sub(1);
@@ -708,7 +782,7 @@ where
                     FrostKeyPackage<C::Curve>,
                     FrostPublicKeyPackage<C::Curve>,
                 ) = C::part3(
-                    secret,
+                    &secret,
                     &self.received_round1,
                     &self.received_round2,
                 )?;
@@ -755,6 +829,8 @@ where
                 Errors::InvalidState("Missing public key package.".into())
             })?;
 
+        // Serialize once and reuse for both FrostStoredKey and
+        // ProtocolOutput to avoid redundant serialization.
         let public_key_package_bytes: Vec<u8> =
             C::serialize_public_key_package(&public_key_package)?;
 
@@ -776,7 +852,7 @@ where
             key_identifier: self.key_identifier.clone(),
             key_share: Some(Secret::new(archived.to_vec())),
             public_key: C::verifying_key(&public_key_package)?,
-            public_key_package: public_key_package_bytes.clone(),
+            public_key_package: public_key_package_bytes,
         })
     }
 

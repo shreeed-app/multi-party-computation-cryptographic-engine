@@ -15,6 +15,7 @@ use app::{
 };
 use helpers::cluster::start_cluster_once;
 use rand::random;
+use serial_test::serial;
 use tonic::{service::interceptor::InterceptedService, transport::Channel};
 
 use crate::helpers::config::ClusterConfig;
@@ -86,7 +87,8 @@ async fn run_key_generation_test(algorithm: Algorithm) {
 /// and non-deterministic failures.
 macro_rules! generate_algo_test {
     ($test_name:ident, $algorithm:expr) => {
-        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        #[tokio::test]
+        #[serial]
         async fn $test_name() {
             run_key_generation_test($algorithm).await;
         }

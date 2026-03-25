@@ -109,7 +109,7 @@ pub trait FrostSigningCurve: Send + Sync + 'static {
     ///
     /// # Returns
     /// * `(FrostSigningNonces<Self::Curve>, FrostSigningCommitments
-    ///   Self::Curve>)` - The generated signing nonces and commitments to be
+    ///   <Self::Curve>)` - The generated signing nonces and commitments to be
     ///   broadcast to the other participants.
     fn commit(
         key_package: &FrostKeyPackage<Self::Curve>,
@@ -240,8 +240,9 @@ pub struct FrostNodeSigning<C: FrostSigningCurve> {
     identifier_u32: u32,
     /// Nonces generated in round 0. Consumed exactly once during signing.
     nonces: Option<FrostSigningNonces<C::Curve>>,
-    /// Signature share produced in round 1. Consumed during finalization.
-    signature_share: Option<FrostSignatureShare<C::Curve>>,
+    /// Serialized signature share produced in round 1. Stored as bytes to
+    /// avoid re-serializing in `finalize` — consumed during finalization.
+    signature_share_bytes: Option<Vec<u8>>,
     /// True if the protocol has been aborted.
     aborted: bool,
 }
@@ -330,7 +331,7 @@ where
             identifier,
             identifier_u32: stored.identifier,
             nonces: None,
-            signature_share: None,
+            signature_share_bytes: None,
             aborted: false,
         })
     }
@@ -412,9 +413,11 @@ where
     ///
     /// Verifies that the signing package contains the expected message and
     /// commitments for this participant before signing. The nonces are
-    /// consumed exactly once here.
+    /// consumed exactly once here. The serialized signature share is stored
+    /// for consumption in `finalize`.
     ///
     /// # Errors
+    /// * `Errors::Aborted` - If the protocol has been aborted.
     /// * `Errors::InvalidRound` - If the message round is not 1.
     /// * `Errors::InvalidMessage` - If the signing package is malformed, the
     ///   message does not match, or commitments are missing.
@@ -477,14 +480,18 @@ where
                 let signature_share: FrostSignatureShare<C::Curve> =
                     C::sign(&signing_package, &nonces, &self.key_package)?;
 
-                self.signature_share = Some(signature_share);
+                // Serialize once and store — reused directly in finalize()
+                // to avoid redundant serialization.
+                let signature_share_bytes: Vec<u8> =
+                    C::serialize_signature_share(&signature_share)?;
+
+                self.signature_share_bytes =
+                    Some(signature_share_bytes.clone());
 
                 let payload: Vec<u8> =
                     encode_wire(&FrostWire::SignatureShare {
                         identifier: self.identifier_u32,
-                        signature_share: C::serialize_signature_share(
-                            &signature_share,
-                        )?,
+                        signature_share: signature_share_bytes,
                     })?;
 
                 Ok(Some(RoundMessage {
@@ -502,13 +509,12 @@ where
 
     /// Finalize the protocol and return the serialized signature share.
     ///
-    /// The signature share is consumed here — calling `finalize` twice will
-    /// return an error.
+    /// The signature share bytes are consumed here — calling `finalize` twice
+    /// will return an error.
     ///
     /// # Errors
-    /// * `Errors::InvalidSignature` - If the signature share is missing.
-    /// * `Errors::InvalidMessage` - If serialization fails.
     /// * `Errors::Aborted` - If the protocol has been aborted.
+    /// * `Errors::InvalidSignature` - If the signature share is missing.
     ///
     /// # Returns
     /// * `ProtocolOutput` - The protocol output containing the serialized
@@ -518,15 +524,13 @@ where
             return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
-        // take() ensures the share is consumed and cannot be reused.
-        let share: FrostSignatureShare<C::Curve> =
-            self.signature_share.take().ok_or_else(|| {
+        // take() ensures the share bytes are consumed and cannot be reused.
+        let share_bytes: Vec<u8> =
+            self.signature_share_bytes.take().ok_or_else(|| {
                 Errors::InvalidSignature("Missing signature share.".into())
             })?;
 
-        Ok(ProtocolOutput::Signature(FinalSignature::Raw(
-            C::serialize_signature_share(&share)?,
-        )))
+        Ok(ProtocolOutput::Signature(FinalSignature::Raw(share_bytes)))
     }
 
     /// Abort the protocol and clear all sensitive cryptographic material.
@@ -535,6 +539,6 @@ where
         // Explicitly drop nonces and signature share to clear sensitive
         // material from memory.
         self.nonces = None;
-        self.signature_share = None;
+        self.signature_share_bytes = None;
     }
 }

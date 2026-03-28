@@ -112,7 +112,7 @@ async fn run_signing_test(algorithm: Algorithm) {
 /// Macro to generate a signing test function for a given algorithm.
 macro_rules! generate_signing_test {
     ($test_name:ident, $algorithm:expr) => {
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         #[serial]
         async fn $test_name() {
             run_signing_test($algorithm).await;

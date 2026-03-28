@@ -1,4 +1,10 @@
-use std::{future::pending, net::SocketAddr, thread::spawn, time::Duration};
+use std::{
+    future::pending,
+    io::Error as IoError,
+    net::SocketAddr,
+    thread::spawn,
+    time::Duration,
+};
 
 use app::{
     auth::bearer_server::BearerAuthInterceptor,
@@ -7,12 +13,20 @@ use app::{
         ipc::{AuthConfig, ControllerIpcConfig, NodeIpcConfig},
     },
     proto::{FILE_DESCRIPTOR_SET, signer::v1::node_server::NodeServer},
-    runtime::{api::RuntimeApi, controller::ControllerRuntime},
+    runtime::{
+        api::RuntimeApi,
+        controller::ControllerRuntime,
+        types::IncomingStream,
+    },
     service::{builder::EngineBuilder, node_engine::NodeEngine},
     transport::{errors::Errors, grpc::node_server::NodeIpcServer},
 };
-use futures::future::join_all;
+use futures::{
+    future::{BoxFuture, join_all},
+    stream::unfold,
+};
 use tokio::{
+    net::{TcpListener, TcpStream},
     runtime::Builder,
     spawn as tokio_spawn,
     sync::{
@@ -87,17 +101,32 @@ async fn run_node(
             .build_v1()
             .map_err(|error: Error| Errors::ConfigError(error.to_string()))?;
 
-    let grpc_server = Server::builder()
+    // Bind before signalling readiness so tests can connect immediately.
+    let listener: TcpListener = TcpListener::bind(address)
+        .await
+        .map_err(|error: IoError| Errors::ConfigError(error.to_string()))?;
+
+    ready.send(()).ok();
+
+    let incoming: IncomingStream =
+        unfold(listener, |listener: TcpListener| -> BoxFuture<'static, _> {
+            Box::pin(async move {
+                let result: Result<TcpStream, IoError> =
+                    listener.accept().await.map(
+                        |(tcp_stream, _): (TcpStream, SocketAddr)| tcp_stream,
+                    );
+                Some((result, listener))
+            })
+        });
+
+    Server::builder()
         .layer(ConcurrencyLimitLayer::new(100))
         .layer(TimeoutLayer::new(Duration::from_secs(600)))
         .layer(auth_layer)
         .add_service(reflection_service)
         .add_service(NodeServer::new(server))
-        .serve(address);
-
-    ready.send(()).ok();
-
-    grpc_server.await?;
+        .serve_with_incoming(incoming)
+        .await?;
 
     Ok(())
 }

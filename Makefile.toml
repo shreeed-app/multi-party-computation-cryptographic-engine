@@ -16,7 +16,7 @@ args = ["machete"]
 description = "Perform a cargo check."
 category = "Development"
 command = "cargo"
-args = ["check"]
+args = ["check", "--release", "--features", "test-fast-crypto"]
 
 [tasks.test-key-generation-frost-ed25519]
 description = "Run key generation tests for FROST Ed25519."
@@ -28,6 +28,9 @@ args = [
     "--test",
     "key_generation",
     "test_frost_ed25519",
+    "--release",
+    "--features",
+    "test-fast-crypto",
     "--",
     "--nocapture",
 ]
@@ -42,6 +45,9 @@ args = [
     "--test",
     "key_generation",
     "test_frost_schnorr_secp256k1",
+    "--release",
+    "--features",
+    "test-fast-crypto",
     "--",
     "--nocapture",
 ]
@@ -68,7 +74,17 @@ description = "Run signing tests for FROST Ed25519."
 category = "Testing"
 env = { "RUST_LOG" = "debug" }
 command = "cargo"
-args = ["test", "--test", "signing", "test_frost_ed25519", "--", "--nocapture"]
+args = [
+    "test",
+    "--test",
+    "signing",
+    "test_frost_ed25519",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+]
 
 [tasks.test-signing-frost-schnorr-secp256k1]
 description = "Run signing tests for FROST Schnorr Secp256k1."
@@ -80,6 +96,9 @@ args = [
     "--test",
     "signing",
     "test_frost_schnorr_secp256k1",
+    "--release",
+    "--features",
+    "test-fast-crypto",
     "--",
     "--nocapture",
 ]
@@ -274,6 +293,8 @@ args = [
     "--secret-file",
     ".secrets",
     "--rm",
+    "--artifact-server-path",
+    "target/.artifacts",
 ]
 
 [tasks.act-miri]

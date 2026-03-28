@@ -1,13 +1,18 @@
 //! Node runtime module.
 
 use std::{
+    io::Error as IoError,
     net::{AddrParseError, SocketAddr},
     time::Duration,
 };
 
 use async_trait::async_trait;
-use tokio::sync::oneshot::Sender;
-use tonic::transport::{Error, Server};
+use futures::{future::BoxFuture, stream::unfold};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::oneshot::Sender,
+};
+use tonic::transport::Server;
 use tonic_middleware::RequestInterceptorLayer;
 use tonic_reflection::server::{
     Builder as ReflectionBuilder,
@@ -21,7 +26,7 @@ use crate::{
     config::node::NodeRuntimeConfig,
     logging::engine::LoggingEngine,
     proto::{FILE_DESCRIPTOR_SET, signer::v1::node_server::NodeServer},
-    runtime::api::RuntimeApi,
+    runtime::{api::RuntimeApi, types::IncomingStream},
     secrets::vault::hashicorp::HashicorpVaultProvider,
     service::{builder::EngineBuilder, node_engine::NodeEngine},
     transport::{errors::Errors, grpc::node_server::NodeIpcServer},
@@ -100,20 +105,39 @@ impl RuntimeApi for NodeRuntime {
                 })?;
         tracing::debug!("Configured gRPC reflection service.");
 
-        // Start the gRPC server and handle any errors that occur during
-        // startup.
-        let server: impl Future<Output = Result<(), Error>> =
-            Server::builder()
-                .layer(ConcurrencyLimitLayer::new(100))
-                .layer(TimeoutLayer::new(Duration::from_secs(600)))
-                .layer(auth_layer)
-                .add_service(reflection_service)
-                .add_service(NodeServer::new(server))
-                .serve(address);
+        // Bind the TCP socket before signalling readiness so that the caller
+        // can connect immediately after receiving the ready signal.
+        let listener: TcpListener =
+            TcpListener::bind(address).await.map_err(|error: IoError| {
+                Errors::ConfigError(error.to_string())
+            })?;
+        tracing::debug!(%address, "TCP listener bound.");
 
         ready.send(()).ok();
 
-        server.await?;
+        let incoming: IncomingStream = unfold(
+            listener,
+            |listener: TcpListener| -> BoxFuture<'static, _> {
+                Box::pin(async move {
+                    let result: Result<TcpStream, IoError> = listener
+                        .accept()
+                        .await
+                        .map(|(tcp_stream, _): (TcpStream, SocketAddr)| {
+                            tcp_stream
+                        });
+                    Some((result, listener))
+                })
+            },
+        );
+
+        Server::builder()
+            .layer(ConcurrencyLimitLayer::new(100))
+            .layer(TimeoutLayer::new(Duration::from_secs(600)))
+            .layer(auth_layer)
+            .add_service(reflection_service)
+            .add_service(NodeServer::new(server))
+            .serve_with_incoming(incoming)
+            .await?;
 
         Ok(())
     }

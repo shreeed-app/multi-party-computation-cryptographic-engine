@@ -27,7 +27,7 @@ use futures::{
 };
 use tokio::{
     net::{TcpListener, TcpStream},
-    runtime::Builder,
+    runtime::{Builder, EnterGuard, Runtime},
     spawn as tokio_spawn,
     sync::{
         OnceCell,
@@ -184,33 +184,34 @@ pub async fn start_cluster_once() {
             ) = channel::<()>();
 
             spawn(move || {
-                Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap()
-                    .block_on(async move {
-                        let node_receivers: Vec<Receiver<()>> = join_all(
-                            (0..cluster_config.node_count).map(spawn_node),
-                        )
-                        .await;
+                let runtime: Runtime =
+                    Builder::new_multi_thread().enable_all().build().unwrap();
 
-                        join_all(node_receivers.into_iter().map(
-                            |ready_receiver: Receiver<()>| async move {
-                                ready_receiver.await.unwrap();
-                            },
-                        ))
-                        .await;
+                let _guard: EnterGuard<'_> = runtime.enter();
 
-                        let controller_receiver: Receiver<()> =
-                            spawn_controller().await;
+                runtime.block_on(async move {
+                    let node_receivers: Vec<Receiver<()>> = join_all(
+                        (0..cluster_config.node_count).map(spawn_node),
+                    )
+                    .await;
 
-                        controller_receiver.await.unwrap();
+                    join_all(node_receivers.into_iter().map(
+                        |ready_receiver: Receiver<()>| async move {
+                            ready_receiver.await.unwrap();
+                        },
+                    ))
+                    .await;
 
-                        let _ = ready_transmitter.send(());
+                    let controller_receiver: Receiver<()> =
+                        spawn_controller().await;
 
-                        // Block forever to keep nodes and controller alive.
-                        pending::<()>().await;
-                    });
+                    controller_receiver.await.unwrap();
+
+                    let _ = ready_transmitter.send(());
+
+                    // Block forever to keep nodes and controller alive.
+                    pending::<()>().await;
+                });
             });
 
             ready_receiver.await.unwrap();

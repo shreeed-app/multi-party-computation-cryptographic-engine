@@ -54,13 +54,6 @@ jobs:
       - name: Build
         run: cargo make check
 
-      - name: Upload target directory
-        uses: actions/upload-artifact@v4
-        with:
-          name: target
-          path: target/
-          retention-days: 1
-
       - name: Upload cargo-make binary
         uses: actions/upload-artifact@v4
         with:
@@ -124,11 +117,10 @@ jobs:
         with:
           shared-key: ci
 
-      - name: Download target directory
-        uses: actions/download-artifact@v4
+      - name: Setup Protoc
+        uses: arduino/setup-protoc@v3
         with:
-          name: target
-          path: target/
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download cargo-make binary
         uses: actions/download-artifact@v4
@@ -138,11 +130,6 @@ jobs:
 
       - name: Make cargo-make executable
         run: chmod +x ~/.cargo/bin/cargo-make
-
-      - name: Setup Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Clippy linter
         run: cargo make lint
@@ -168,11 +155,10 @@ jobs:
         with:
           shared-key: ci
 
-      - name: Download target directory
-        uses: actions/download-artifact@v4
+      - name: Setup Protoc
+        uses: arduino/setup-protoc@v3
         with:
-          name: target
-          path: target/
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download cargo-make binary
         uses: actions/download-artifact@v4
@@ -182,11 +168,6 @@ jobs:
 
       - name: Make cargo-make executable
         run: chmod +x ~/.cargo/bin/cargo-make
-
-      - name: Setup Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run tests
         run: cargo make test

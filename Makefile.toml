@@ -293,8 +293,6 @@ args = [
     "--secret-file",
     ".secrets",
     "--rm",
-    "--artifact-server-path",
-    "target/.artifacts",
 ]
 
 [tasks.act-miri]

@@ -26,7 +26,12 @@ const MAXIMUM_WORKERS: usize = 64;
 
 /// Timeout for incoming messages. If no message arrives within this window
 /// the worker treats it as a disconnect and aborts.
-const INCOMING_MESSAGE_TIMEOUT: Duration = Duration::from_secs(300);
+const INCOMING_MESSAGE_TIMEOUT: Duration =
+    Duration::from_secs(if cfg!(feature = "test-fast-crypto") {
+        600
+    } else {
+        300
+    });
 
 /// Maximum time to wait for a worker slot when the concurrency limit is
 /// reached. If no slot becomes available within this window the worker signals

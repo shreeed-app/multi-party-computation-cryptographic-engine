@@ -6,10 +6,9 @@
 
 use std::{
     fmt::Debug,
-    hint::spin_loop,
     mem::take,
     sync::{Condvar, LockResult, Mutex, MutexGuard, WaitTimeoutResult},
-    thread::spawn,
+    thread::{spawn, yield_now},
     time::Duration,
 };
 
@@ -165,7 +164,7 @@ pub fn drive<M, O, E: Debug>(
             // resuming to avoid busy-waiting.
             ProceedResult::Yielded => {
                 tracing::debug!("State machine yielded.");
-                spin_loop();
+                yield_now();
             },
 
             // State machine produced an output, drive is complete.

@@ -185,7 +185,6 @@ pub async fn start_cluster_once() {
 
             spawn(move || {
                 let runtime: Runtime = Builder::new_multi_thread()
-                    .worker_threads(8)
                     .enable_all()
                     .build()
                     .unwrap();

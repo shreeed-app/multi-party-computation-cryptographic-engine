@@ -138,7 +138,7 @@ args = [
 [tasks.test]
 description = "Run all tests sequentially."
 category = "Testing"
-env = { "RUST_LOG" = "info" }
+env = { "RUST_LOG" = "debug" }
 command = "cargo"
 args = [
     "test",

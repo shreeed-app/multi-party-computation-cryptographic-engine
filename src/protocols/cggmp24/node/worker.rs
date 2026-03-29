@@ -354,7 +354,7 @@ pub fn spawn_worker<P: CggmpProtocol>(worker: Worker<P>) {
         // Release the slot and wake one waiting thread.
         let mut active: MutexGuard<'_, usize> =
             recover_lock(limiter.active.lock(), LockContext::Release);
-        *active -= 1;
+        *active = active.saturating_sub(1);
         tracing::debug!(active = *active, "Worker slot released.");
         limiter.condvar.notify_one();
     });

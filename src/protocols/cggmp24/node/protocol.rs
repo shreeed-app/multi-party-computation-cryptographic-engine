@@ -34,7 +34,8 @@ use crate::{
     transport::errors::Errors,
 };
 
-/// Abstracts over CGGMP24 node protocol variants (keygen, aux gen, signing).
+/// Abstracts over CGGMP24 node protocol variants (key generation, auxiliary
+/// generation, signing).
 pub trait CggmpNodeProtocol: Send + 'static {
     /// Protocol message type.
     type Message: Send + Serialize + DeserializeOwned + 'static;
@@ -94,8 +95,8 @@ pub trait CggmpNodeProtocol: Send + 'static {
 /// Generic CGGMP24 node protocol driver.
 ///
 /// Handles the common channel and message infrastructure shared across all
-/// CGGMP24 node protocols (keygen, aux gen, signing). Protocol-specific
-/// initialization and finalization are delegated to `P`.
+/// CGGMP24 node protocols (key generation, auxiliary generation, signing).
+/// Protocol-specific initialization and finalization are delegated to `P`.
 pub struct Cggmp24NodeProtocol<P: CggmpNodeProtocol> {
     /// Protocol-specific data (key identifier, thresholds, key share, etc.)
     pub data: P::Data,

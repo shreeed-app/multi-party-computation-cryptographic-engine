@@ -13,6 +13,9 @@
     dylint::security_unsafe_usage
 )]
 
+#[macro_use]
+mod macros;
+
 pub mod auth;
 pub mod config;
 pub mod logging;

@@ -76,6 +76,13 @@ async fn run_key_generation_test(algorithm: Algorithm) {
 
     let key: KeyGenerationResult =
         response.result.expect("Key generation result missing.");
+
+    assert!(!key.public_key.is_empty(), "Public key is empty.");
+    assert!(
+        !key.public_key_package.is_empty(),
+        "Public key package is empty."
+    );
+
     println!(
         "Public key: {:?} \nPublic key package: {:?}",
         key.public_key, key.public_key_package,
@@ -87,7 +94,7 @@ async fn run_key_generation_test(algorithm: Algorithm) {
 /// and non-deterministic failures.
 macro_rules! generate_algo_test {
     ($test_name:ident, $algorithm:expr) => {
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        #[tokio::test]
         #[serial]
         async fn $test_name() {
             run_key_generation_test($algorithm).await;

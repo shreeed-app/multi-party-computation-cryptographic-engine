@@ -11,18 +11,18 @@ token = "0"
 # Nodes to connect to.
 [[nodes]]
 endpoint = "http://127.0.0.1:50051"
-participant_id = 1
+participant_identifier = 1
 [[nodes.auth]]
 token = "1"
 
 [[nodes]]
 endpoint = "http://127.0.0.1:50052"
-participant_id = 2
+participant_identifier = 2
 [[nodes.auth]]
 token = "2"
 
 [[nodes]]
 endpoint = "http://127.0.0.1:50053"
-participant_id = 3
+participant_identifier = 3
 [[nodes.auth]]
 token = "3"

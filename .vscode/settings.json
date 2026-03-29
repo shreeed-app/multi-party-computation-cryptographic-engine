@@ -28,6 +28,7 @@
         "cggmp",
         "ciphersuite",
         "clippy",
+        "concatcp",
         "condvar",
         "Deque",
         "dotenv",

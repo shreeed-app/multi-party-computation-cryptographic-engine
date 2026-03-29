@@ -49,7 +49,7 @@ use crate::{
             Round,
         },
     },
-    secrets::{secret::Secret, types::KeyShare},
+    secrets::{secret::Secret, types::KeyShare, vault::key_path::scoped},
     transport::errors::Errors,
 };
 
@@ -88,9 +88,9 @@ impl CggmpNodeProtocol for AuxiliaryGenerationProtocolDescriptor {
         data.participants
     }
 
-    /// Finalize the aux gen protocol — combine the `IncompleteKeyShare` with
-    /// the generated `AuxInfo` to produce a complete `KeyShare` for Vault
-    /// storage.
+    /// Finalize the auxiliary generation protocol — combine the
+    /// `IncompleteKeyShare` with the generated `AuxInfo` to produce a
+    /// complete `KeyShare` for Vault storage.
     ///
     /// # Errors
     /// * `Errors::InvalidKeyShare` - If any step of key assembly fails.
@@ -105,7 +105,7 @@ impl CggmpNodeProtocol for AuxiliaryGenerationProtocolDescriptor {
         let aux_info: CggmpAuxiliaryGenerationOutput = output;
 
         // Deserialize the IncompleteKeyShare from the Vault blob passed at
-        // init — produced by the keygen protocol.
+        // init — produced by the key generation protocol.
         let stored: Cggmp24StoredKey =
             data.incomplete_key_share.with_ref(|blob: &Vec<u8>| {
                 let archived: &ArchivedCggmp24StoredKey =
@@ -156,10 +156,7 @@ impl CggmpNodeProtocol for AuxiliaryGenerationProtocolDescriptor {
         // Scope the key share under "<key_id>/<participant_id>" to avoid
         // Vault collisions across participants.
         Ok(ProtocolOutput::AuxiliaryGeneration {
-            key_identifier: format!(
-                "{}/{}",
-                data.key_identifier, data.identifier_u32
-            ),
+            key_identifier: scoped(&data.key_identifier, data.identifier_u32),
             key_share: Some(Secret::new(blob)),
         })
     }
@@ -167,8 +164,8 @@ impl CggmpNodeProtocol for AuxiliaryGenerationProtocolDescriptor {
 
 /// CGGMP24 ECDSA Secp256k1 auxiliary info generation node protocol instance.
 ///
-/// Runs the aux gen MPC protocol to produce Paillier moduli and Pedersen
-/// parameters for each participant. On completion, combines the
+/// Runs the auxiliary generation MPC protocol to produce Paillier moduli and
+/// Pedersen parameters for each participant. On completion, combines the
 /// `IncompleteKeyShare` from DKG with the generated `AuxInfo` to produce
 /// a complete `KeyShare` stored in Vault.
 pub struct Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration(
@@ -190,7 +187,8 @@ impl Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration {
     /// # Returns
     /// * `Self` - The initialized protocol instance ready to run.
     pub fn try_new(protocol_init: ProtocolInit) -> Result<Self, Errors> {
-        // Unpack the node aux gen init — reject any other protocol init.
+        // Unpack the node auxiliary generation init — reject any other
+        // protocol init.
         let init: NodeAuxiliaryGenerationInit = match protocol_init {
             ProtocolInit::AuxiliaryGeneration(
                 AuxiliaryGenerationInit::Node(init),
@@ -216,8 +214,9 @@ impl Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration {
             },
         )?;
 
-        // Prefix the execution identifier to avoid collisions with keygen
-        // and signing executions sharing the same key identifier.
+        // Prefix the execution identifier to avoid collisions with key
+        // generation and signing executions sharing the same key
+        // identifier.
         let execution_identifier_bytes: Vec<u8> =
             format!("auxiliary:{}", init.common.key_identifier).into_bytes();
 
@@ -231,9 +230,9 @@ impl Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration {
         Ok(Self(Cggmp24NodeProtocol::new(
             data,
             init.identifier,
-            // Spawn the worker thread — it will drive the CGGMP24 aux gen
-            // state machine to completion and signal via done_transmitter
-            // when finished.
+            // Spawn the worker thread — it will drive the CGGMP24 auxiliary
+            // generation state machine to completion and signal via
+            // done_transmitter when finished.
             AuxiliaryGenerationProtocol {
                 identifier,
                 participants,
@@ -265,8 +264,8 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration {
         self.0.is_done()
     }
 
-    /// Handle an incoming aux gen protocol message and deliver it to the
-    /// worker.
+    /// Handle an incoming auxiliary generation protocol message and deliver it
+    /// to the worker.
     ///
     /// # Errors
     /// * `Errors::InvalidMessage` - If the message cannot be decoded or
@@ -300,9 +299,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration {
         Ok(self.0.pending_messages.pop_front())
     }
 
-    /// Finalize the aux gen protocol — combine the `IncompleteKeyShare` with
-    /// the generated `AuxInfo` to produce a complete `KeyShare` for Vault
-    /// storage.
+    /// Finalize the auxiliary generation protocol — combine the
+    /// `IncompleteKeyShare` with the generated `AuxInfo` to produce a
+    /// complete `KeyShare` for Vault storage.
     ///
     /// Consumes the output — calling `finalize` twice will return an error.
     ///

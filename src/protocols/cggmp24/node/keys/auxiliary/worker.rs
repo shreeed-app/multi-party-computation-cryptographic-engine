@@ -13,6 +13,7 @@ use sha2::Sha256;
 
 use crate::protocols::cggmp24::{
     node::worker::{CggmpProtocol, WorkerDone, drive},
+    pregenerated_primes::pregenerate_primes,
     security_level::Cggmp24SecurityLevel,
 };
 
@@ -57,7 +58,7 @@ impl CggmpProtocol for AuxiliaryGenerationProtocol {
         // time, which is not the focus of our performance optimizations.
         tracing::info!("Pre-generating Paillier primes.");
         let pregenerated_primes: PregeneratedPrimes<Cggmp24SecurityLevel> =
-            PregeneratedPrimes::<Cggmp24SecurityLevel>::generate(&mut random);
+            pregenerate_primes(self.identifier);
         tracing::info!("Paillier primes pregenerated.");
 
         let state_machine: impl StateMachine<

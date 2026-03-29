@@ -55,7 +55,7 @@ args = [
 [tasks.test-key-generation-cggmp24-ecdsa-secp256k1]
 description = "Run key generation tests for CGGMP24 ECDSA Secp256k1."
 category = "Testing"
-env = { "RUST_LOG" = "debug" }
+env = { "RUST_LOG" = "info" }
 command = "cargo"
 args = [
     "test",
@@ -106,7 +106,7 @@ args = [
 [tasks.test-signing-cggmp24-ecdsa-secp256k1]
 description = "Run signing tests for CGGMP24 ECDSA Secp256k1."
 category = "Testing"
-env = { "RUST_LOG" = "debug" }
+env = { "RUST_LOG" = "info" }
 command = "cargo"
 args = [
     "test",
@@ -120,8 +120,8 @@ args = [
     "--nocapture",
 ]
 
-[tasks.test]
-description = "Run all tests sequentially."
+[tasks.generate-test-primes]
+description = "Generate hardcoded Paillier primes for test-fast-crypto feature."
 category = "Testing"
 env = { "RUST_LOG" = "debug" }
 command = "cargo"
@@ -132,7 +132,24 @@ args = [
     "test-fast-crypto",
     "--",
     "--nocapture",
+    "pregenerate_primes",
+]
+
+[tasks.test]
+description = "Run all tests sequentially."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
+command = "cargo"
+args = [
+    "test",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
     "--test-threads=1",
+    '--skip',
+    "pregenerate_primes",
 ]
 
 [tasks.fmt-check]

@@ -66,7 +66,7 @@ async fn run_signing_test(algorithm: Algorithm) {
     let key_identifier: String =
         format!("{}-{}", algorithm.as_str(), random::<u64>());
 
-    let keygen_response: GenerateKeyResponse = client
+    let key_generation_response: GenerateKeyResponse = client
         .generate_key(GenerateKeyRequest {
             key_identifier: key_identifier.clone(),
             threshold: cluster_config.threshold(),
@@ -77,11 +77,10 @@ async fn run_signing_test(algorithm: Algorithm) {
         .expect("Key generation failed.")
         .into_inner();
 
-    let key: KeyGenerationResult =
-        keygen_response.result.expect("Key generation result missing.");
+    let key: KeyGenerationResult = key_generation_response
+        .result
+        .expect("Key generation result missing.");
 
-    // All signing algorithms expect a 32-byte message digest. Hash the test
-    // message with SHA-256 before submitting it to the signing protocol.
     let message: Vec<u8> =
         format!("{}-{}", algorithm.as_str(), random::<u64>())
             .as_bytes()
@@ -112,7 +111,7 @@ async fn run_signing_test(algorithm: Algorithm) {
 /// Macro to generate a signing test function for a given algorithm.
 macro_rules! generate_signing_test {
     ($test_name:ident, $algorithm:expr) => {
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        #[tokio::test]
         #[serial]
         async fn $test_name() {
             run_signing_test($algorithm).await;

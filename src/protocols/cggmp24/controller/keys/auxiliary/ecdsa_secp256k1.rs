@@ -1,9 +1,9 @@
 //! CGGMP24 ECDSA Secp256k1 controller-side auxiliary info generation protocol.
 //!
-//! Orchestrates the aux gen session lifecycle across all participant nodes:
-//! starts sessions in parallel (each node generates Paillier primes
-//! concurrently), routes messages across rounds, and finalizes all sessions
-//! to produce complete key shares in Vault.
+//! Orchestrates the auxiliary generation session lifecycle across all
+//! participant nodes: starts sessions in parallel (each node generates
+//! Paillier primes concurrently), routes messages across rounds, and finalizes
+//! all sessions to produce complete key shares in Vault.
 
 use async_trait::async_trait;
 use tonic::Status;
@@ -81,11 +81,12 @@ impl CggmpControllerProtocol for AuxiliaryGenerationControllerDescriptor {
         Ok((response.session_identifier, response.messages, Vec::new()))
     }
 
-    /// Finalize all aux gen sessions.
+    /// Finalize all auxiliary generation sessions.
     ///
-    /// Unlike keygen, aux gen produces no public output — all key material
-    /// is stored privately in Vault by each node. This method simply verifies
-    /// that all sessions completed with the expected output variant.
+    /// Unlike key generation, auxiliary generation produces no public output —
+    /// all key material is stored privately in Vault by each node. This
+    /// method simply verifies that all sessions completed with the
+    /// expected output variant.
     ///
     /// # Errors
     /// * `Errors::InvalidMessage` - If any node returns an unexpected output
@@ -119,10 +120,10 @@ impl CggmpControllerProtocol for AuxiliaryGenerationControllerDescriptor {
 
 /// CGGMP24 ECDSA Secp256k1 controller-side auxiliary info generation protocol.
 ///
-/// Drives the full aux gen session lifecycle: starts sessions on all nodes in
-/// parallel (allowing concurrent Paillier prime generation), routes messages
-/// between participants across rounds, and finalizes all sessions once every
-/// worker signals completion.
+/// Drives the full auxiliary generation session lifecycle: starts sessions on
+/// all nodes in parallel (allowing concurrent Paillier prime generation),
+/// routes messages between participants across rounds, and finalizes all
+/// sessions once every worker signals completion.
 pub struct Cggmp24EcdsaSecp256k1ControllerAuxiliaryGeneration(
     Cggmp24ControllerProtocol<AuxiliaryGenerationControllerDescriptor>,
 );

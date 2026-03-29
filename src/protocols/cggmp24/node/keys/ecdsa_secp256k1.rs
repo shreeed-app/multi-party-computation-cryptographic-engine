@@ -91,9 +91,10 @@ impl CggmpNodeProtocol for KeyGenerationProtocolDescriptor {
         let incomplete_key_share: CggmpKeyGenerationOutput = output;
 
         // Serialize the incomplete key share to JSON for storage —
-        // combined with AuxInfo during aux gen to produce a full KeyShare.
-        // Cloned before moving into Cggmp24StoredKey so the same bytes can be
-        // reused as the public_key_package without re-serializing.
+        // combined with AuxInfo during auxiliary generation to produce a full
+        // KeyShare. Cloned before moving into Cggmp24StoredKey so the
+        // same bytes can be reused as the public_key_package without
+        // re-serializing.
         let json: Vec<u8> =
             to_vec(&incomplete_key_share).map_err(|error: Error| {
                 Errors::InvalidKeyShare(error.to_string())

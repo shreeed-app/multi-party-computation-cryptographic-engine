@@ -9,26 +9,14 @@ mod inner {
     /// production.
     ///
     /// # Parameter constraints
-    ///
     /// The parameters must satisfy the following mathematical constraints
     /// imposed by the ZK proofs:
-    ///
     /// - `rsa_prime_bitlen > max(ell, ell_prime) + epsilon` — required by
     ///   `π_aff` (affine operation in range proof). Uses both `ell` and
-    ///   `ell_prime` as range parameters. Here: 800 > max(256, 512) + 256 =
-    ///   768.
-    ///
+    ///   `ell_prime` as range parameters.
     /// - `rsa_prime_bitlen > ell + epsilon` — required by `π_enc_elg`
-    ///   (EncProofOfK). Here: 800 > 256 + 256 = 512.
-    ///
-    /// - `rsa_pubkey_bitlen = 2 * rsa_prime_bitlen - 1`. Here: 1599 = 2 * 800
-    ///   - 1.
-    ///
-    /// # Performance gains vs `SecurityLevel128` (1536-bit primes)
-    ///
-    /// - Prime generation: ~6x faster (800-bit vs 1536-bit safe primes).
-    /// - ZK proof arithmetic: ~3.5x faster.
-    /// - Overall aux gen: from ~60s to ~10s per node.
+    ///   (EncProofOfK).
+    /// - `rsa_pubkey_bitlen = 2 * rsa_prime_bitlen - 1`.
     #[derive(Clone)]
     pub struct Cggmp24SecurityLevel;
 

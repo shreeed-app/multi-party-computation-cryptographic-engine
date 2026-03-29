@@ -128,7 +128,7 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
                 } => (public_key, public_key_package),
                 _ => {
                     return Err(Errors::Internal(
-                        "Invalid keygen output.".into(),
+                        "Invalid key generation output.".into(),
                     )
                     .into());
                 },

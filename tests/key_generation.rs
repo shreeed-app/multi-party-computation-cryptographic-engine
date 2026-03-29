@@ -94,7 +94,7 @@ async fn run_key_generation_test(algorithm: Algorithm) {
 /// and non-deterministic failures.
 macro_rules! generate_algo_test {
     ($test_name:ident, $algorithm:expr) => {
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         #[serial]
         async fn $test_name() {
             run_key_generation_test($algorithm).await;

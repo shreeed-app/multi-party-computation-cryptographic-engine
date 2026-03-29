@@ -184,10 +184,8 @@ pub async fn start_cluster_once() {
             ) = channel::<()>();
 
             spawn(move || {
-                let runtime: Runtime = Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
+                let runtime: Runtime =
+                    Builder::new_multi_thread().enable_all().build().unwrap();
 
                 let _guard: EnterGuard<'_> = runtime.enter();
 

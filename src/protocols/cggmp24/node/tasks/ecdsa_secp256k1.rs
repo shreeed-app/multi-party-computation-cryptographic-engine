@@ -1,6 +1,6 @@
 //! CGGMP24 ECDSA Secp256k1 signing protocol implementation.
 
-use std::{array::TryFromSliceError, num::TryFromIntError};
+use std::{array::TryFromSliceError, num::TryFromIntError, sync::Arc};
 
 use async_trait::async_trait;
 use cggmp24::{
@@ -17,6 +17,7 @@ use k256::ecdsa::{
 use rkyv::{Archived, access, deserialize, rancor::Error as RkyvError};
 use serde_json::{Error, from_slice};
 use sha2::{Digest, Sha256};
+use tokio::sync::Notify;
 
 use crate::{
     proto::signer::v1::{
@@ -518,5 +519,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
     fn abort(&mut self) {
         self.0.aborted = true;
         self.0.abort_worker();
+    }
+
+    fn activity_notify(&self) -> Option<Arc<Notify>> {
+        Some(self.0.activity_notify())
     }
 }

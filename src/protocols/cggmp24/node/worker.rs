@@ -7,7 +7,7 @@
 use std::{
     fmt::Debug,
     mem::take,
-    sync::{Condvar, LockResult, Mutex, MutexGuard, WaitTimeoutResult},
+    sync::{Arc, Condvar, LockResult, Mutex, MutexGuard, WaitTimeoutResult},
     thread::{spawn, yield_now},
     time::Duration,
 };
@@ -19,6 +19,7 @@ use round_based::{
     Outgoing,
     state_machine::{ProceedResult, StateMachine},
 };
+use tokio::sync::Notify;
 
 /// Maximum number of concurrent CGGMP24 workers across all protocol types.
 const MAXIMUM_WORKERS: usize = 64;
@@ -72,6 +73,9 @@ pub trait CggmpProtocol: Send + 'static {
     ///   messages from the node.
     /// * `outgoing` (`Sender<Vec<Outgoing<Self::Msg>>`) - channel to send
     ///   outgoing messages from the node.
+    /// * `notify` (`&Notify`) - fired after each outgoing batch is sent so
+    ///   that the async poller in `collect_round` can wake up promptly rather
+    ///   than spinning with `yield_now`.
     ///
     /// # Returns
     /// * `Option<Self::Output>` - `Some(output)` if the protocol completed
@@ -81,6 +85,7 @@ pub trait CggmpProtocol: Send + 'static {
         self,
         incoming: &Receiver<Incoming<Self::Message>>,
         outgoing: &Sender<Vec<Outgoing<Self::Message>>>,
+        notify: &Notify,
     ) -> Option<Self::Output>;
 }
 
@@ -96,6 +101,9 @@ pub trait CggmpProtocol: Send + 'static {
 ///   the node.
 /// * `outgoing` (`Sender<Vec<Outgoing<M>>`) - channel to send outgoing
 ///   messages to the node.
+/// * `notify` (`&Notify`) - fired after each outgoing batch is sent so that
+///   the async poller in `collect_round` can wake up immediately instead of
+///   busy-spinning. Called from this OS thread — no Tokio runtime required.
 ///
 /// # Returns
 /// * `Option<O>` - `Some(output)` if the state machine completed successfully,
@@ -105,6 +113,7 @@ pub fn drive<M, O, E: Debug>(
     mut state_machine: impl StateMachine<Msg = M, Output = Result<O, E>>,
     incoming: &Receiver<Incoming<M>>,
     outgoing: &Sender<Vec<Outgoing<M>>>,
+    notify: &Notify,
 ) -> Option<O> {
     let mut pending: Vec<Outgoing<M>> = Vec::new();
     tracing::debug!("State machine starting.");
@@ -128,11 +137,15 @@ pub fn drive<M, O, E: Debug>(
                 // Flush all accumulated outgoing messages atomically before
                 // blocking — ensures the node receives the full batch for
                 // this round before we wait for the next incoming message.
-                if !pending.is_empty()
-                    && outgoing.send(take(&mut pending)).is_err()
-                {
-                    tracing::debug!("Outgoing channel closed, aborting.");
-                    return None;
+                if !pending.is_empty() {
+                    if outgoing.send(take(&mut pending)).is_err() {
+                        tracing::debug!("Outgoing channel closed, aborting.");
+                        return None;
+                    }
+                    // Wake the async poller so it can drain this batch and
+                    // forward the messages to the controller without delay.
+                    // `notify_one` is safe to call from any thread.
+                    notify.notify_one();
                 }
 
                 tracing::debug!("Waiting for incoming message.");
@@ -180,6 +193,7 @@ pub fn drive<M, O, E: Debug>(
                         completion."
                     );
                     let _ = outgoing.send(take(&mut pending));
+                    notify.notify_one();
                 }
 
                 return match result {
@@ -288,6 +302,9 @@ pub struct Worker<P: CggmpProtocol> {
     pub outgoing_transmitter: Sender<Vec<Outgoing<P::Message>>>,
     /// Channel to notify the node when the worker completes.
     pub done_transmitter: Sender<WorkerDone<P::Output>>,
+    /// Fired after each outgoing batch and after the done signal so that
+    /// `collect_round` can wake immediately rather than busy-spinning.
+    pub notify: Arc<Notify>,
 }
 
 /// Spawn a worker thread for the given protocol, subject to the global
@@ -368,9 +385,11 @@ pub fn spawn_worker<P: CggmpProtocol>(worker: Worker<P>) {
 fn run_worker<P: CggmpProtocol>(worker: Worker<P>) {
     tracing::debug!("Worker thread started, running protocol.");
 
-    let result: Option<<P as CggmpProtocol>::Output> = worker
-        .protocol
-        .run(&worker.incoming_receiver, &worker.outgoing_transmitter);
+    let result: Option<<P as CggmpProtocol>::Output> = worker.protocol.run(
+        &worker.incoming_receiver,
+        &worker.outgoing_transmitter,
+        &worker.notify,
+    );
 
     let done: WorkerDone<<P as CggmpProtocol>::Output> = match result {
         Some(output) => {
@@ -388,4 +407,8 @@ fn run_worker<P: CggmpProtocol>(worker: Worker<P>) {
             "Failed to send completion signal, receiver already dropped."
         );
     }
+
+    // Wake the async poller so it can observe the done signal via
+    // `try_recv` on the done channel. Must fire after the send above.
+    worker.notify.notify_one();
 }

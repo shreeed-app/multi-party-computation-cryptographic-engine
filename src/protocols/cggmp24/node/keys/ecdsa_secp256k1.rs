@@ -1,10 +1,11 @@
 //! CGGMP24 ECDSA Secp256k1 key generation protocol implementation.
 
-use std::num::TryFromIntError;
+use std::{num::TryFromIntError, sync::Arc};
 
 use async_trait::async_trait;
 use rkyv::{rancor::Error as RkyvError, to_bytes};
 use serde_json::{Error, to_vec};
+use tokio::sync::Notify;
 
 use crate::{
     proto::signer::v1::RoundMessage,
@@ -290,5 +291,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeKeyGeneration {
     fn abort(&mut self) {
         self.0.aborted = true;
         self.0.abort_worker();
+    }
+
+    fn activity_notify(&self) -> Option<Arc<Notify>> {
+        Some(self.0.activity_notify())
     }
 }

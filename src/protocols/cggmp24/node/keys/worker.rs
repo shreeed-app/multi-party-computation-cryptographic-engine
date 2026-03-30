@@ -12,6 +12,7 @@ use crossbeam_channel::{Receiver, Sender};
 use rand_core::OsRng;
 use round_based::{Incoming, Outgoing, state_machine::StateMachine};
 use sha2::Sha256;
+use tokio::sync::Notify;
 
 use crate::protocols::cggmp24::{
     node::worker::{CggmpProtocol, WorkerDone, drive},
@@ -48,6 +49,7 @@ impl CggmpProtocol for KeyGenerationProtocol {
         self,
         incoming: &Receiver<Incoming<Self::Message>>,
         outgoing: &Sender<Vec<Outgoing<Self::Message>>>,
+        notify: &Notify,
     ) -> Option<Self::Output> {
         let execution_identifier: ExecutionId<'_> =
             ExecutionId::new(&self.execution_identifier_bytes);
@@ -69,6 +71,6 @@ impl CggmpProtocol for KeyGenerationProtocol {
         .set_security_level::<Cggmp24SecurityLevel>()
         .into_state_machine(&mut random);
 
-        drive(state_machine, incoming, outgoing).map(Box::new)
+        drive(state_machine, incoming, outgoing, notify).map(Box::new)
     }
 }

@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use tokio::{
-    sync::{Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard, Notify},
     task::yield_now,
 };
 use tracing::instrument;
@@ -246,11 +246,16 @@ impl EngineApi for NodeEngine {
 
         loop {
             // Acquire the mutex, drain all messages the worker has produced so
-            // far, then release it before yielding. Releasing before yield is
-            // critical — holding the mutex while waiting would block
-            // `submit_round` from delivering incoming messages to the worker,
-            // which is the only thing that can unblock message production.
-            let (produced, done): (Vec<RoundMessage>, bool) = {
+            // far, then release it before waiting. Releasing before the wait
+            // is critical — holding the mutex while waiting would
+            // block `submit_round` from delivering incoming
+            // messages to the worker, which is the only thing that
+            // can unblock message production.
+            let (produced, done, notify): (
+                Vec<RoundMessage>,
+                bool,
+                Option<Arc<Notify>>,
+            ) = {
                 let mut entry: MutexGuard<'_, SessionEntry> =
                     entry.lock().await;
 
@@ -273,7 +278,11 @@ impl EngineApi for NodeEngine {
                     produced.push(message);
                 }
 
-                (produced, protocol.is_done())
+                // Clone the notify handle before releasing the mutex so we
+                // can await it without holding the lock.
+                let notify: Option<Arc<Notify>> = protocol.activity_notify();
+
+                (produced, protocol.is_done(), notify)
             }; // mutex released here — submit_round can now acquire it.
 
             if !produced.is_empty() || done {
@@ -287,10 +296,17 @@ impl EngineApi for NodeEngine {
             }
 
             // Nothing produced yet and protocol not done — the worker is still
-            // processing the last incoming message batch. Yield to the Tokio
-            // runtime so other tasks (including submit_round) can run, then
-            // retry.
-            yield_now().await;
+            // processing the last incoming message batch. Wait for the worker
+            // to signal activity before retrying. Using `notified().await`
+            // instead of `yield_now()` is critical on slow hardware:
+            // `yield_now` keeps the threads spinning and starves
+            // the worker OS threads of CPU time. `notified().
+            // await` suspends the task so the Tokio thread goes
+            // idle, letting the OS scheduler run the worker threads.
+            match notify {
+                Some(notify) => notify.notified().await,
+                None => yield_now().await,
+            }
         }
     }
 

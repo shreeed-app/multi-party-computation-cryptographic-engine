@@ -1,6 +1,6 @@
 //! Generic CGGMP24 node protocol driver.
 
-use std::{collections::VecDeque, num::TryFromIntError};
+use std::{collections::VecDeque, num::TryFromIntError, sync::Arc};
 
 use crossbeam_channel::{
     Receiver,
@@ -19,6 +19,7 @@ use round_based::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Error, to_vec};
+use tokio::sync::Notify;
 
 use crate::{
     proto::signer::v1::RoundMessage,
@@ -121,6 +122,10 @@ pub struct Cggmp24NodeProtocol<P: CggmpNodeProtocol> {
     pub message_identifier: MsgId,
     /// True if the protocol has been aborted.
     pub aborted: bool,
+    /// Shared with the worker OS thread. The worker fires this after every
+    /// outgoing batch and after the done signal so that `collect_round` can
+    /// await it instead of busy-spinning with `yield_now`.
+    notify: Arc<Notify>,
 }
 
 impl<P: CggmpNodeProtocol> Cggmp24NodeProtocol<P>
@@ -163,6 +168,11 @@ where
             Receiver<WorkerDone<P::Output>>,
         ) = bounded(1);
 
+        // Shared notification handle — the worker fires this after every
+        // outgoing batch and after the done signal; `collect_round` awaits
+        // it to avoid busy-spinning on slow hardware.
+        let notify: Arc<Notify> = Arc::new(Notify::new());
+
         // Spawn the worker thread with the provided protocol descriptor and
         // the transmitting ends of the channels.
         spawn_worker(Worker {
@@ -170,6 +180,7 @@ where
             incoming_receiver,
             outgoing_transmitter,
             done_transmitter,
+            notify: Arc::clone(&notify),
         });
 
         Self {
@@ -182,6 +193,7 @@ where
             worker_done: None,
             message_identifier: 0,
             aborted: false,
+            notify,
         }
     }
 
@@ -358,6 +370,18 @@ where
     ///   have been drained, false otherwise.
     pub fn is_done(&self) -> bool {
         self.worker_done.is_some() && self.pending_messages.is_empty()
+    }
+
+    /// Return a clone of the shared `Notify` handle.
+    ///
+    /// Used by `Protocol::activity_notify` implementations on the wrapper
+    /// types so that `collect_round` can await the worker instead of
+    /// busy-spinning with `yield_now`.
+    ///
+    /// # Returns
+    /// * `Arc<Notify>` - A cloned reference to the shared notify handle.
+    pub fn activity_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.notify)
     }
 
     /// Consume the worker done signal and finalize via `P::finalize`.

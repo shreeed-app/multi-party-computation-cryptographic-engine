@@ -12,6 +12,7 @@ use crossbeam_channel::{Receiver, Sender};
 use rand_core::OsRng;
 use round_based::{Incoming, Outgoing, state_machine::StateMachine};
 use sha2::Sha256;
+use tokio::sync::Notify;
 
 use crate::protocols::cggmp24::{
     node::worker::{CggmpProtocol, WorkerDone, drive},
@@ -49,6 +50,7 @@ impl CggmpProtocol for SigningProtocol {
         self,
         incoming: &Receiver<Incoming<Self::Message>>,
         outgoing: &Sender<Vec<Outgoing<Self::Message>>>,
+        notify: &Notify,
     ) -> Option<Self::Output> {
         let execution_identifier: ExecutionId<'_> =
             ExecutionId::new(&self.execution_identifier_bytes);
@@ -69,6 +71,6 @@ impl CggmpProtocol for SigningProtocol {
         )
         .sign_sync(&mut random, &self.data_to_sign);
 
-        drive(state_machine, incoming, outgoing)
+        drive(state_machine, incoming, outgoing, notify)
     }
 }

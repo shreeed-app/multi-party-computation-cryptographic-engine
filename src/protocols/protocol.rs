@@ -1,6 +1,9 @@
 //! Protocol trait definitions.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use tokio::sync::Notify;
 
 use crate::{
     proto::signer::v1::RoundMessage,
@@ -90,4 +93,13 @@ pub trait Protocol: Send + Sync {
     /// # Returns
     /// * `()` - Nothing.
     fn abort(&mut self);
+
+    /// Return the `Notify` used to signal that new activity (outgoing messages
+    /// or completion) is available from the worker thread.
+    ///
+    /// # Returns
+    /// * `Option<Arc<Notify>>` - The notify handle, or `None`.
+    fn activity_notify(&self) -> Option<Arc<Notify>> {
+        None
+    }
 }

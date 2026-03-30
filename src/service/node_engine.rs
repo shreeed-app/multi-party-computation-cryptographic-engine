@@ -183,19 +183,6 @@ impl EngineApi for NodeEngine {
             produced.push(message);
         }
 
-        // Since the controller executes the protocol synchronously, we can
-        // simply call `next_round()` until the protocol is done to collect all
-        // produced messages for the current round.
-
-        while let Some(message) = protocol.next_round().await? {
-            tracing::debug!(
-                "Message produced for session {}: {:?}",
-                session_identifier,
-                message
-            );
-            produced.push(message);
-        }
-
         entry.state.advance_round(round);
         Ok(produced)
     }
@@ -305,7 +292,14 @@ impl EngineApi for NodeEngine {
             // idle, letting the OS scheduler run the worker threads.
             match notify {
                 Some(notify) => notify.notified().await,
-                None => yield_now().await,
+                None => {
+                    tracing::debug!(
+                        "No notify handle provided by protocol for session \
+                        {} — falling back to yield_now polling.",
+                        session_identifier
+                    );
+                    yield_now().await
+                },
             }
         }
     }

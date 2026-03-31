@@ -108,20 +108,17 @@ impl EngineApi for NodeEngine {
                 self.sessions.remove(session_identifier);
             })?;
 
-        // Since the controller executes the protocol synchronously, we can
-        // call `next_round()` until the protocol is done to collect
-        // all produced messages for the first round before returning.
         let mut messages: Vec<RoundMessage> = Vec::new();
-        loop {
-            match protocol.next_round().await {
-                Ok(Some(message)) => messages.push(message),
-                Ok(None) => break,
-                Err(error) => {
-                    // Clean up the session store entry so the orphaned session
-                    // doesn't linger until TTL.
-                    self.sessions.remove(session_identifier);
-                    return Err(error);
-                },
+        if protocol.activity_notify().is_none() {
+            loop {
+                match protocol.next_round().await {
+                    Ok(Some(message)) => messages.push(message),
+                    Ok(None) => break,
+                    Err(error) => {
+                        self.sessions.remove(session_identifier);
+                        return Err(error);
+                    },
+                }
             }
         }
 

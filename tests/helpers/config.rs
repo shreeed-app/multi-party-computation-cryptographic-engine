@@ -1,8 +1,3 @@
-//! Test cluster configuration — overridable via environment variables.
-//!
-//! All variables can be set in a `.env` file at the workspace root or
-//! exported directly in the shell.
-
 use std::{fmt::Debug, str::FromStr, sync::OnceLock};
 
 use dotenvy::{dotenv, var};
@@ -18,12 +13,6 @@ enum EnvKey {
     ControllerToken,
     NodeBasePort,
     NodeBaseToken,
-    VaultAddress,
-    VaultMount,
-    VaultPrefix,
-    VaultField,
-    VaultToken,
-    VaultNamespace,
 }
 
 impl EnvKey {
@@ -36,31 +25,31 @@ impl EnvKey {
         var(self.as_ref()).ok().filter(|value: &String| !value.is_empty())
     }
 
-    /// Read and parse into `T`, panicking if absent or unparseable.
+    /// Read and parse into `T`, returning `default` if the variable is absent.
+    /// Panics if the variable is present but cannot be parsed.
     ///
     /// # Type Parameters
     /// * `T` - The type to parse the environment variable into. Must implement
     ///   `FromStr` and have a `Debug` error type.
     ///
     /// # Returns
-    /// * `T` - The parsed value of the environment variable.
+    /// * `T` - The parsed value, or `default` when the variable is unset.
     ///
     /// # Panics
-    /// * If the environment variable is not set or is empty.
-    /// * If the environment variable cannot be parsed into type `T`.
-    pub fn require<T>(&self) -> T
+    /// * If the environment variable is present but cannot be parsed into `T`.
+    pub fn with_default<T>(&self, default: T) -> T
     where
-        T: std::str::FromStr,
-        T::Err: std::fmt::Debug,
+        T: FromStr,
+        T::Err: Debug,
     {
-        self.read()
-            .unwrap_or_else(|| {
-                panic!("Missing required env var: {}", self.as_ref())
-            })
-            .parse()
-            .unwrap_or_else(|error: <T as FromStr>::Err| {
-                panic!("Invalid value for {}: {:?}", self.as_ref(), error)
-            })
+        match self.read() {
+            Some(value) => {
+                value.parse().unwrap_or_else(|error: <T as FromStr>::Err| {
+                    panic!("Invalid value for {}: {:?}", self.as_ref(), error)
+                })
+            },
+            None => default,
+        }
     }
 }
 
@@ -80,39 +69,26 @@ pub struct ClusterConfig {
     pub node_base_port: u16,
     /// Token prefix; node N gets `<prefix><N>`.
     pub node_token_prefix: String,
-    /// Vault server address.
-    pub vault_address: String,
-    /// Vault KV mount path.
-    pub vault_mount: String,
-    /// Key prefix within the mount.
-    pub vault_prefix: String,
-    /// Field name used to store the key share.
-    pub vault_field: String,
-    /// Vault authentication token.
-    pub vault_token: String,
-    /// Optional Vault namespace.
-    pub vault_namespace: Option<String>,
 }
 
 impl ClusterConfig {
     /// Load configuration from environment variables, with `.env` as fallback.
+    /// All variables are optional and fall back to sensible defaults so that
+    /// tests work out-of-the-box without a `.env` file.
     fn load() -> Self {
         // Best-effort — silently ignored if .env is absent.
         let _ = dotenv();
 
         Self {
-            node_count: EnvKey::NodeCount.require::<usize>(),
-            controller_host: EnvKey::ControllerHost.require::<String>(),
-            controller_port: EnvKey::ControllerPort.require::<u16>(),
-            controller_token: EnvKey::ControllerToken.require::<String>(),
-            node_base_port: EnvKey::NodeBasePort.require::<u16>(),
-            node_token_prefix: EnvKey::NodeBaseToken.require::<String>(),
-            vault_address: EnvKey::VaultAddress.require::<String>(),
-            vault_mount: EnvKey::VaultMount.require::<String>(),
-            vault_prefix: EnvKey::VaultPrefix.require::<String>(),
-            vault_field: EnvKey::VaultField.require::<String>(),
-            vault_token: EnvKey::VaultToken.require::<String>(),
-            vault_namespace: EnvKey::VaultNamespace.read(),
+            node_count: EnvKey::NodeCount.with_default(3usize),
+            controller_host: EnvKey::ControllerHost
+                .with_default("127.0.0.1".to_string()),
+            controller_port: EnvKey::ControllerPort.with_default(50051u16),
+            controller_token: EnvKey::ControllerToken
+                .with_default("controller-".to_string()),
+            node_base_port: EnvKey::NodeBasePort.with_default(50052u16),
+            node_token_prefix: EnvKey::NodeBaseToken
+                .with_default("node-".to_string()),
         }
     }
 

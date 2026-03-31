@@ -11,7 +11,7 @@ ignored = ["prost", "tonic-prost", "strum"]
 
 [workspace.metadata.dylint]
 libraries = [
-    { git = "https://github.com/shreeed-app/rust-security-lints", branch = "master", pattern = "rules/*" },
+    { git = "https://github.com/shreeed-app/rust-security-lints", branch = "dev", pattern = "rules/*" },
     # For local development, you can use the path to the local copy of the 
     # repository instead of the git dependency.
     # { path = "../rust-security-lints/rules/*" },
@@ -21,8 +21,13 @@ libraries = [
 name = "app"
 path = "src/main.rs"
 
+[lib]
+name = "app"
+path = "src/lib.rs"
+
 [features]
 default = []
+test-fast-crypto = []
 
 [dependencies]
 async-trait = "0.1.89"
@@ -33,11 +38,12 @@ cggmp24 = { version = "0.7.0-alpha.3", features = [
     "state-machine",
     "curve-secp256k1",
 ] }
-clap = { version = "4.5.60", features = ["derive"] }
-config = "0.15.19"
+clap = { version = "4.6.0", features = ["derive"] }
+config = "0.15.22"
 crossbeam-channel = "0.5.15"
 dotenvy = "0.15.7"
 figment = { version = "0.10.19", features = ["env"] }
+frost-core = "2.2.0"
 frost-ed25519 = { version = "2.2.0", features = ["serde"] }
 frost-secp256k1 = "2.2.0"
 futures = "0.3.32"
@@ -46,7 +52,7 @@ headers = "0.4.1"
 http = "1.4.0"
 http-auth-basic = "0.3.7"
 k256 = "0.13.4"
-once_cell = "1.21.3"
+once_cell = "1.21.4"
 postcard = "1.1.3"
 prost = "0.14.3"
 rand = "0.10.0"
@@ -54,7 +60,7 @@ rand = "0.10.0"
 # crates compatibility, versions 0.9+ are not compatible.
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 rkyv = { version = "0.8.15", features = ["std"] }
-round-based = "0.4.1"
+round-based = { version = "0.4.1" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10.9"
@@ -63,7 +69,7 @@ strum_macros = "0.28.0"
 subtle = "2.6.1"
 thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros"] }
-toml = "1.0.3"
+toml = "1.1.0"
 tonic = "0.14.5"
 tonic-middleware = "0.4.1"
 tonic-prost = "0.14.5"
@@ -73,17 +79,19 @@ tower-http = "0.6.8"
 tracing = "0.1"
 tracing-appender = "0.2.4"
 tracing-error = "0.2"
-tracing-subscriber = { version = "0.3", features = [
+tracing-subscriber = { version = "0.3.23", features = [
     "env-filter",
     "fmt",
     "json",
 ] }
-uuid = { version = "1.22.0", features = ["v4"] }
-vaultrs = "0.7.4"
+uuid = { version = "1.23.0", features = ["v4"] }
+vaultrs = "0.8.0"
 zeroize = "1.8"
+const_format = "0.2.35"
 
 [dev-dependencies]
 axum = "0.8.8"
+serial_test = "3.4.0"
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

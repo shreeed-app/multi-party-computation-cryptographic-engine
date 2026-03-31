@@ -6,9 +6,9 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Deserialize)]
 pub struct NodeIpcConfig {
     /// Logical node identifier (used for scoping).
-    pub node_id: String,
+    pub node_identifier: String,
     /// Participant identifier for the node (used for authentication).
-    pub participant_id: u32,
+    pub participant_identifier: u32,
     /// Authentication configuration.
     pub auth: AuthConfig,
     /// IPC server address (e.g. "[::1]:50051").

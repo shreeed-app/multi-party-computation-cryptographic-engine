@@ -2,18 +2,21 @@
 
 mod helpers;
 
-use helpers::cluster::start_cluster_once;
-use mpc_signer_engine::{
+use app::{
     auth::bearer_client::ClientAuthInterceptor,
     config::ipc::AuthConfig,
     proto::signer::v1::{
         GenerateKeyRequest,
         GenerateKeyResponse,
+        KeyGenerationResult,
         controller_client::ControllerClient,
     },
     protocols::algorithm::Algorithm,
 };
-use tonic::transport::Channel;
+use helpers::cluster::start_cluster_once;
+use rand::random;
+use serial_test::serial;
+use tonic::{service::interceptor::InterceptedService, transport::Channel};
 
 use crate::helpers::config::ClusterConfig;
 
@@ -49,33 +52,41 @@ async fn run_key_generation_test(algorithm: Algorithm) {
     // interceptor. This client will be used to send the key generation request
     // to the controller.
     let mut client: ControllerClient<
-        tonic::service::interceptor::InterceptedService<
-            Channel,
-            ClientAuthInterceptor,
-        >,
+        InterceptedService<Channel, ClientAuthInterceptor>,
     > = ControllerClient::with_interceptor(channel, interceptor);
-
-    // Construct the key generation request with the appropriate parameters,
-    // including the key identifier, threshold, participant IDs, and algorithm.
-    // The key identifier is formatted as "test-{algorithm}".
-    let request: GenerateKeyRequest = GenerateKeyRequest {
-        key_identifier: format!("test-{}", algorithm.as_str()),
-        threshold: cluster_config.threshold(),
-        participants: cluster_config.participants(),
-        algorithm: algorithm.as_str().into(),
-    };
 
     // Send the key generation request to the controller and await the
     // response. If the request fails (e.g., due to a connection error or
     // server error), the test will panic with the message "Key generation
     // failed."
     let response: GenerateKeyResponse = client
-        .generate_key(request)
+        .generate_key(GenerateKeyRequest {
+            key_identifier: format!(
+                "{}-{}",
+                algorithm.as_str(),
+                random::<u64>()
+            ),
+            threshold: cluster_config.threshold(),
+            participants: cluster_config.participants(),
+            algorithm: algorithm.as_str().into(),
+        })
         .await
         .expect("Key generation failed.")
         .into_inner();
 
-    assert!(response.result.is_some());
+    let key: KeyGenerationResult =
+        response.result.expect("Key generation result missing.");
+
+    assert!(!key.public_key.is_empty(), "Public key is empty.");
+    assert!(
+        !key.public_key_package.is_empty(),
+        "Public key package is empty."
+    );
+
+    println!(
+        "Public key: {:?} \nPublic key package: {:?}",
+        key.public_key, key.public_key_package,
+    );
 }
 
 /// Macro to generate a test function for a given algorithm.
@@ -83,7 +94,8 @@ async fn run_key_generation_test(algorithm: Algorithm) {
 /// and non-deterministic failures.
 macro_rules! generate_algo_test {
     ($test_name:ident, $algorithm:expr) => {
-        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        #[serial]
         async fn $test_name() {
             run_key_generation_test($algorithm).await;
         }

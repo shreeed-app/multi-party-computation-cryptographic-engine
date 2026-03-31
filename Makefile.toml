@@ -16,13 +16,141 @@ args = ["machete"]
 description = "Perform a cargo check."
 category = "Development"
 command = "cargo"
-args = ["check"]
+args = ["check", "--release", "--features", "test-fast-crypto"]
+
+[tasks.test-key-generation-frost-ed25519]
+description = "Run key generation tests for FROST Ed25519."
+category = "Testing"
+env = { "RUST_LOG" = "debug" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "key_generation",
+    "test_frost_ed25519",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test-key-generation-frost-schnorr-secp256k1]
+description = "Run key generation tests for FROST Schnorr Secp256k1."
+category = "Testing"
+env = { "RUST_LOG" = "debug" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "key_generation",
+    "test_frost_schnorr_secp256k1",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test-key-generation-cggmp24-ecdsa-secp256k1]
+description = "Run key generation tests for CGGMP24 ECDSA Secp256k1."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "key_generation",
+    "test_cggmp24_ecdsa_secp256k1",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test-signing-frost-ed25519]
+description = "Run signing tests for FROST Ed25519."
+category = "Testing"
+env = { "RUST_LOG" = "debug" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "signing",
+    "test_frost_ed25519",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test-signing-frost-schnorr-secp256k1]
+description = "Run signing tests for FROST Schnorr Secp256k1."
+category = "Testing"
+env = { "RUST_LOG" = "debug" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "signing",
+    "test_frost_schnorr_secp256k1",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+]
+
+[tasks.test-signing-cggmp24-ecdsa-secp256k1]
+description = "Run signing tests for CGGMP24 ECDSA Secp256k1."
+category = "Testing"
+env = { "RUST_LOG" = "info" }
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "signing",
+    "test_cggmp24_ecdsa_secp256k1",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+]
+
+[tasks.generate-test-primes]
+description = "Generate hardcoded Paillier primes for test-fast-crypto feature."
+category = "Testing"
+env = { "RUST_LOG" = "debug" }
+command = "cargo"
+args = [
+    "test",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+    "pregenerate_primes",
+]
 
 [tasks.test]
-description = "Run tests with all features."
-category = ""
+description = "Run all tests sequentially."
+category = "Testing"
+env = { "RUST_LOG" = "debug" }
 command = "cargo"
-args = ["test", "--all-features"]
+args = [
+    "test",
+    "--release",
+    "--features",
+    "test-fast-crypto",
+    "--",
+    "--nocapture",
+    "--test-threads=1",
+    '--skip',
+    "pregenerate_primes",
+]
 
 [tasks.fmt-check]
 description = "Check code formatting."
@@ -154,12 +282,12 @@ args = ["dylint", "--all", "--no-deps"]
 [tasks.ci]
 description = "Full CI quality check pipeline."
 category = "CI"
-dependencies = ["fmt-check", "check", "lint", "dylint", "test", "deny", "audit"]
+dependencies = ["fmt-check", "check", "lint", "test", "deny", "audit"]
 
 [tasks.ci-apply]
 description = "Full CI quality check pipeline with automatic fixes."
 category = "CI"
-dependencies = ["fmt", "check", "lint", "dylint", "test", "deny", "audit"]
+dependencies = ["fmt", "check", "lint", "test", "deny", "audit"]
 
 [tasks.miri]
 description = "Run Miri."

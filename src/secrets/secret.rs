@@ -1,10 +1,11 @@
 //! Wrapper type for sensitive data stored in memory.
 
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+
 use zeroize::Zeroize;
 
 /// `Secret<T>` ensures, the value is zeroized on drop, is not accidentally
 /// cloned, and access is always explicitly controlled.
-#[derive(Debug)]
 pub struct Secret<T: Zeroize> {
     inner: T,
 }
@@ -43,6 +44,12 @@ impl<T: Zeroize> Secret<T> {
     /// * `R` - Result of the closure execution.
     pub fn with_mut<R>(&mut self, func: impl FnOnce(&mut T) -> R) -> R {
         func(&mut self.inner)
+    }
+}
+
+impl<T: Zeroize> Debug for Secret<T> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        formatter.write_str("Secret([REDACTED])")
     }
 }
 

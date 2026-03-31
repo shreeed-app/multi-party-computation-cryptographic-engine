@@ -1,6 +1,6 @@
 //! Authentication middleware for the gRPC server.
 
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use headers::{Authorization, HeaderMapExt, authorization::Bearer};
 use http::Request;
@@ -8,13 +8,18 @@ use subtle::ConstantTimeEq;
 use tonic::{Status, body::Body};
 use tonic_middleware::RequestInterceptor;
 
-use crate::transport::errors::Errors;
+use crate::{secrets::secret::Secret, transport::errors::Errors};
 
 /// Authentication interceptor for gRPC requests.
+///
+/// The expected token is stored inside an `Arc<Secret<String>>` so that:
+/// - The underlying bytes are zeroized on drop (via `Secret`).
+/// - Cloning the interceptor (required by `tonic_middleware`) increments a
+///   reference count rather than duplicating the token in memory.
 #[derive(Clone)]
 pub struct BearerAuthInterceptor {
     /// The expected token for authentication.
-    expected_token: String,
+    expected_token: Arc<Secret<String>>,
 }
 
 impl BearerAuthInterceptor {
@@ -26,7 +31,7 @@ impl BearerAuthInterceptor {
     /// # Returns
     /// * `AuthInterceptor` - A new instance of `AuthInterceptor`.
     pub fn new(expected: String) -> Self {
-        Self { expected_token: expected }
+        Self { expected_token: Arc::new(Secret::new(expected)) }
     }
 }
 
@@ -57,7 +62,8 @@ impl RequestInterceptor for BearerAuthInterceptor {
         'l: 'async_trait,
         Self: 'async_trait,
     {
-        let expected: String = self.expected_token.clone();
+        let expected_token: Arc<Secret<String>> =
+            Arc::clone(&self.expected_token);
 
         Box::pin(async move {
             // Extract the Bearer token from the Authorization header.
@@ -70,14 +76,22 @@ impl RequestInterceptor for BearerAuthInterceptor {
 
             let token: &str = auth.token();
 
-            // Perform constant-time comparison of the provided token with the
-            // expected token.
-            if expected.len() != token.len()
-                || !bool::from(ConstantTimeEq::ct_eq(
-                    expected.as_bytes(),
-                    token.as_bytes(),
-                ))
-            {
+            // Perform constant-time comparison inside `with_ref` to limit the
+            // window during which the expected token bytes are accessible.
+            // Both the length check and byte comparison run within the same
+            // closure — the short-circuit on length is unavoidable with
+            // `subtle::ct_eq` (requires equal-length slices) but is acceptable
+            // when the token is a fixed-length random credential.
+            let token_matches: bool =
+                expected_token.with_ref(|expected: &String| {
+                    expected.len() == token.len()
+                        && bool::from(ConstantTimeEq::ct_eq(
+                            expected.as_bytes(),
+                            token.as_bytes(),
+                        ))
+                });
+
+            if !token_matches {
                 return Err(Errors::InvalidToken(
                     "Provided token does not match expected token.".into(),
                 )

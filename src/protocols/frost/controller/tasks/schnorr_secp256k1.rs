@@ -1,23 +1,6 @@
 //! FROST(schnorr-secp256k1) curve implementation for controller-side signing.
 
-use std::collections::BTreeMap;
-
-use frost_secp256k1::{
-    Error,
-    Identifier,
-    Signature,
-    SigningPackage,
-    aggregate,
-    keys::PublicKeyPackage,
-    round1::SigningCommitments,
-    round2::SignatureShare,
-};
-use postcard::{Error as PostcardError, from_bytes, to_allocvec};
-
-use crate::{
-    protocols::algorithm::Algorithm,
-    transport::errors::Errors,
-};
+use frost_secp256k1::Secp256K1Sha256;
 
 use super::protocol::{FrostControllerSigning, FrostControllerSigningCurve};
 
@@ -28,106 +11,8 @@ pub type FrostSchnorrSecp256k1ControllerSigning =
 /// FROST(schnorr-secp256k1) curve descriptor for controller-side signing.
 pub struct FrostSchnorrSecp256k1ControllerSigningCurve;
 
-impl FrostControllerSigningCurve for FrostSchnorrSecp256k1ControllerSigningCurve {
-    type Identifier = Identifier;
-    type SigningCommitments = SigningCommitments;
-    type SigningPackage = SigningPackage;
-    type SignatureShare = SignatureShare;
-    type PublicKeyPackage = PublicKeyPackage;
-    type Signature = Signature;
-
-    fn algorithm() -> Algorithm {
-        Algorithm::FrostSchnorrSecp256k1
-    }
-
-    fn identifier_from_u16(id: u16) -> Result<Self::Identifier, Errors> {
-        Identifier::try_from(id).map_err(|error: Error| {
-            Errors::InvalidParticipant(format!(
-                "Failed to create secp256k1 identifier from {}: {}",
-                id, error
-            ))
-        })
-    }
-
-    fn deserialize_public_key_package(
-        bytes: &[u8],
-    ) -> Result<Self::PublicKeyPackage, Errors> {
-        from_bytes(bytes).map_err(|error: PostcardError| {
-            Errors::InvalidMessage(format!(
-                "Failed to deserialize secp256k1 public key package: {}",
-                error
-            ))
-        })
-    }
-
-    fn deserialize_commitments(
-        bytes: &[u8],
-    ) -> Result<Self::SigningCommitments, Errors> {
-        from_bytes(bytes).map_err(|error: PostcardError| {
-            Errors::InvalidMessage(format!(
-                "Failed to deserialize secp256k1 signing commitments: {}",
-                error
-            ))
-        })
-    }
-
-    fn build_signing_package(
-        commitments: BTreeMap<Self::Identifier, Self::SigningCommitments>,
-        message: &[u8],
-    ) -> Result<Self::SigningPackage, Errors> {
-        Ok(SigningPackage::new(commitments, message))
-    }
-
-    fn serialize_signing_package(
-        package: &Self::SigningPackage,
-    ) -> Result<Vec<u8>, Errors> {
-        to_allocvec(package)
-            .map(|v| v.to_vec())
-            .map_err(|error: PostcardError| {
-                Errors::InvalidMessage(format!(
-                    "Failed to serialize secp256k1 signing package: {}",
-                    error
-                ))
-            })
-    }
-
-    fn deserialize_signature_share(
-        bytes: &[u8],
-    ) -> Result<Self::SignatureShare, Errors> {
-        from_bytes(bytes).map_err(|error: PostcardError| {
-            Errors::InvalidMessage(format!(
-                "Failed to deserialize secp256k1 signature share: {}",
-                error
-            ))
-        })
-    }
-
-    fn aggregate(
-        signing_package: &Self::SigningPackage,
-        shares: &BTreeMap<Self::Identifier, Self::SignatureShare>,
-        public_key_package: &Self::PublicKeyPackage,
-    ) -> Result<Self::Signature, Errors> {
-        aggregate(signing_package, shares, public_key_package).map_err(
-            |error: Error| {
-                Errors::InvalidSignature(format!(
-                    "Failed to aggregate secp256k1 signature shares: {}",
-                    error
-                ))
-            },
-        )
-    }
-
-    fn serialize_signature(
-        signature: &Self::Signature,
-    ) -> Result<Vec<u8>, Errors> {
-        signature
-            .serialize()
-            .map(|bytes| bytes.to_vec())
-            .map_err(|error: Error| {
-                Errors::InvalidSignature(format!(
-                    "Failed to serialize secp256k1 signature: {}",
-                    error
-                ))
-            })
-    }
+impl FrostControllerSigningCurve
+    for FrostSchnorrSecp256k1ControllerSigningCurve
+{
+    type Curve = Secp256K1Sha256;
 }

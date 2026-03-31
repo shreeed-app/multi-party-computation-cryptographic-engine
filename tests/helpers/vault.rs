@@ -1,28 +1,53 @@
-// tests/helpers/vault.rs
+use std::{collections::HashMap, sync::Arc};
 
-use mpc_signer_engine::secrets::vault::config::VaultConfig;
+use app::{
+    secrets::{secret::Secret, types::KeyShare, vault::api::VaultProvider},
+    transport::errors::Errors,
+};
+use async_trait::async_trait;
+use tokio::sync::Mutex;
 
-use crate::helpers::config::ClusterConfig;
+/// In-memory vault mock. Key shares are stored in a `HashMap` protected by
+/// a `Mutex` so the provider can be cloned and shared across async tasks.
+#[derive(Clone)]
+pub struct MockVaultProvider {
+    store: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+}
 
-/// Construct a `VaultConfig` for the tests based on the cluster configuration.
-/// This function reads the necessary Vault configuration values from the
-/// global cluster configuration and constructs a `VaultConfig` instance that
-/// can be used by the node runtimes to connect to the Vault server and perform
-/// secret storage and retrieval operations during the tests.
-///
-/// # Returns
-/// * `VaultConfig` - A configuration struct containing the Vault connection
-///   details, including the address, mount path, key prefix, field name,
-///   authentication token, and optional namespace
-pub fn vault_config() -> VaultConfig {
-    let cluster_config: &ClusterConfig = ClusterConfig::get();
+impl MockVaultProvider {
+    /// Create a new, empty mock vault.
+    pub fn new() -> Self {
+        Self { store: Arc::new(Mutex::new(HashMap::new())) }
+    }
+}
 
-    VaultConfig {
-        address: cluster_config.vault_address.clone(),
-        mount: cluster_config.vault_mount.clone(),
-        prefix: cluster_config.vault_prefix.clone(),
-        field: cluster_config.vault_field.clone(),
-        token: Some(cluster_config.vault_token.clone()),
-        namespace: cluster_config.vault_namespace.clone(),
+#[async_trait]
+impl VaultProvider for MockVaultProvider {
+    async fn get_key_share(
+        &self,
+        key_identifier: &str,
+    ) -> Result<KeyShare, Errors> {
+        self.store
+            .lock()
+            .await
+            .get(key_identifier)
+            .map(|bytes: &Vec<u8>| Secret::new(bytes.clone()))
+            .ok_or_else(|| {
+                Errors::VaultError(format!(
+                    "Key not found in mock vault: {}",
+                    key_identifier
+                ))
+            })
+    }
+
+    async fn store_key_share(
+        &self,
+        key_identifier: &str,
+        key_share: KeyShare,
+    ) -> Result<(), Errors> {
+        let bytes: Vec<u8> =
+            key_share.with_ref(|bytes: &Vec<u8>| bytes.clone());
+        self.store.lock().await.insert(key_identifier.to_string(), bytes);
+        Ok(())
     }
 }

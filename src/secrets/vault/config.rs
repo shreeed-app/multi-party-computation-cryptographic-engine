@@ -1,10 +1,12 @@
 //! Vault configuration loader.
 
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+
 use config::{Config, ConfigError, File};
 use serde::Deserialize;
 
 /// HashiCorp Vault KVv2 configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct VaultConfig {
     /// Vault address, e.g. "https://vault.service.consul:8200".
     pub address: String,
@@ -19,6 +21,23 @@ pub struct VaultConfig {
     pub namespace: Option<String>,
     /// Token can be provided directly, but prefer env var.
     pub token: Option<String>,
+}
+
+impl Debug for VaultConfig {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        formatter
+            .debug_struct("VaultConfig")
+            .field("address", &self.address)
+            .field("mount", &self.mount)
+            .field("prefix", &self.prefix)
+            .field("field", &self.field)
+            .field("namespace", &self.namespace)
+            .field(
+                "token",
+                &self.token.as_ref().map(|_: &String| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 impl VaultConfig {

@@ -67,7 +67,7 @@ impl EngineApi for ControllerEngine {
         protocol.next_round().await?;
 
         let output: ProtocolOutput = protocol.finalize().await?;
-        let session_id: SessionIdentifier = SessionIdentifier::new();
+        let session_identifier: SessionIdentifier = SessionIdentifier::new();
 
         self.outputs
             .write()
@@ -84,11 +84,11 @@ impl EngineApi for ControllerEngine {
                     ))
                 },
             )?
-            .insert(session_id, output);
+            .insert(session_identifier, output);
 
         // Controller does not use RoundMessage.
         Ok((
-            session_id,
+            session_identifier,
             vec![RoundMessage {
                 round: 0,
                 from: None,
@@ -109,7 +109,7 @@ impl EngineApi for ControllerEngine {
     ///   not support incremental rounds.
     async fn submit_round(
         &self,
-        _session_id: SessionIdentifier,
+        _session_identifier: SessionIdentifier,
         _message: RoundMessage,
     ) -> Result<Vec<RoundMessage>, Errors> {
         Err(Errors::InvalidState(
@@ -127,7 +127,7 @@ impl EngineApi for ControllerEngine {
     ///   not support incremental rounds.
     async fn collect_round(
         &self,
-        _session_id: SessionIdentifier,
+        _session_identifier: SessionIdentifier,
     ) -> Result<(Vec<RoundMessage>, bool), Errors> {
         Err(Errors::InvalidState(
             "Controller does not support `collect_round()`.".into(),
@@ -137,7 +137,7 @@ impl EngineApi for ControllerEngine {
     /// Return stored output.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Target session.
+    /// * `session_identifier` (`SessionIdentifier`) - Target session.
     /// # Errors
     ///
     /// * `Error::SessionNotFound` if session identifier does not exist.
@@ -147,12 +147,12 @@ impl EngineApi for ControllerEngine {
     ///
     /// # Returns
     /// * `ProtocolOutput` - Final protocol output stored from start_session.
-    #[instrument(skip(self), fields(session_id = %session_id))]
+    #[instrument(skip(self), fields(session_identifier = %session_identifier))]
     async fn finalize(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
     ) -> Result<ProtocolOutput, Errors> {
-        tracing::debug!(?session_id, "Finalizing protocol session.");
+        tracing::debug!(?session_identifier, "Finalizing protocol session.");
 
         self.outputs
             .write()
@@ -169,14 +169,16 @@ impl EngineApi for ControllerEngine {
                     ))
                 },
             )?
-            .remove(&session_id)
-            .ok_or_else(|| Errors::SessionNotFound(session_id.to_string()))
+            .remove(&session_identifier)
+            .ok_or_else(|| {
+                Errors::SessionNotFound(session_identifier.to_string())
+            })
     }
 
     /// Abort removes stored output.
     ///
     /// # Arguments
-    /// * `session_id` (`SessionId`) - Target session.
+    /// * `session_identifier` (`SessionIdentifier`) - Target session.
     ///
     /// # Errors
     /// * `Error::SessionNotFound` if session identifier does not exist.
@@ -185,12 +187,12 @@ impl EngineApi for ControllerEngine {
     ///
     /// # Returns
     /// * `()` - Unit.
-    #[instrument(skip(self), fields(session_id = %session_id))]
+    #[instrument(skip(self), fields(session_identifier = %session_identifier))]
     async fn abort(
         &self,
-        session_id: SessionIdentifier,
+        session_identifier: SessionIdentifier,
     ) -> Result<(), Errors> {
-        tracing::debug!(?session_id, "Aborting protocol session.");
+        tracing::debug!(?session_identifier, "Aborting protocol session.");
 
         self.outputs
             .write()
@@ -207,7 +209,7 @@ impl EngineApi for ControllerEngine {
                     ))
                 },
             )?
-            .remove(&session_id);
+            .remove(&session_identifier);
 
         Ok(())
     }

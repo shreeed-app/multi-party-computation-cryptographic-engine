@@ -21,11 +21,10 @@ env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
-  release:
-    name: Release
+  build:
+    name: Build
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -33,22 +32,59 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+
+      - name: Ensure cargo in PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
-
-      - name: Install dependencies
-        run: cargo binstall cargo-make cargo-cyclonedx -y
 
       - name: Setup Protoc
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install cargo-make and cargo-cyclonedx
+        run: cargo binstall -y --force cargo-make cargo-cyclonedx
+
       - name: Generate SBOM
         run: cargo make sbom
 
-      - name: Rename SBOM file
+      - name: Rename SBOM
         run: mv mpc-signer-engine.cdx.json bom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: bom
+          path: bom.json
+          retention-days: 1
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: bom
+          path: .
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -78,9 +114,3 @@ jobs:
         run: |
           cosign sign --yes $IMAGE_NAME:${{ github.sha }}
           cosign attest --yes --type cyclonedx --predicate bom.json $IMAGE_NAME:${{ github.sha }}
-
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: release-artifacts
-          path: bom.json

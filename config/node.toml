@@ -2,15 +2,15 @@
 
 [ipc]
 # Logical node identifier.
-node_id = "1"
+node_identifier = "1"
 # Participant ID used inside MPC
-participant_id = 1
+participant_identifier = 1
 
 # Address to bind the gRPC IPC server
 address = "127.0.0.1:50051"
 
 # Session time-to-live (seconds)
-ttl_seconds = 60
+ttl_seconds = 600
 
 [ipc.auth]
 # Shared token expected from controller.

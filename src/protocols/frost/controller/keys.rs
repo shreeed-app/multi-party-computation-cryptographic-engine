@@ -28,6 +28,7 @@ use crate::{
             Round,
         },
     },
+    secrets::vault::key_path::scoped,
     transport::{
         errors::{Errors, map_status},
         grpc::node_client::NodeIpcClient,
@@ -61,9 +62,9 @@ pub struct FrostControllerKeyGeneration {
     /// identifier.
     round1_packages: BTreeMap<u32, Vec<u8>>,
     /// Round 2 packages received from nodes, indexed by (from, to)
-    /// participant identifiers.identifier
-    /// Outer key = sender participant identifier.
-    /// Inner key = recipient participant identifier.
+    /// participant identifiers.
+    /// Outer key = recipient participant identifier.
+    /// Inner key = sender participant identifier.
     round2_packages: BTreeMap<u32, BTreeMap<u32, Vec<u8>>>,
     /// Final protocol output, set after successful completion of the
     /// protocol.
@@ -149,32 +150,95 @@ impl FrostControllerKeyGeneration {
         Ok(identifiers)
     }
 
-    /// Get a mutable reference to the node client corresponding to the given
-    /// participant identifier.
+    /// Get a cloned node client for the given participant identifier.
     ///
-    /// # Arguments
-    /// * `identifier` (`u32`) - Participant identifier.
+    /// Cloned to allow use inside async closures without holding a mutable
+    /// reference across await points.
     ///
     /// # Errors
-    /// * `Errors::InvalidParticipant` - If no node client with the given
-    ///   participant identifier is found.
+    /// * `Errors::InvalidParticipant` - If no node with the given identifier
+    ///   is found.
     ///
     /// # Returns
-    /// * `&mut NodeIpcClient` - Mutable reference to the corresponding node
-    ///   client.
-    fn node_mut(
-        &mut self,
-        identifier: u32,
-    ) -> Result<&mut NodeIpcClient, Errors> {
+    /// * `NodeIpcClient` - A clone of the node client corresponding to the
+    ///   given participant identifier.
+    fn node_clone(&self, identifier: u32) -> Result<NodeIpcClient, Errors> {
         self.nodes
-            .iter_mut()
-            .find(|node: &&mut NodeIpcClient| {
+            .iter()
+            .find(|node: &&NodeIpcClient| {
                 node.participant_id() == Some(identifier)
             })
-            .ok_or(Errors::InvalidParticipant(format!(
-                "Participant identifer {} not found among node clients.",
-                identifier
-            )))
+            .cloned()
+            .ok_or_else(|| {
+                Errors::InvalidParticipant(format!(
+                    "Participant identifier {} not found among node clients.",
+                    identifier
+                ))
+            })
+    }
+
+    /// Decode a `FrostWire::DkgRound1Package` message and return the typed
+    /// identifier-package pair.
+    ///
+    /// Extracted to keep `collect_round1` free of inline match arms.
+    ///
+    /// # Arguments
+    /// * `payload` (`&[u8]`) - Raw wire payload from the round 0 response.
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` - If the wire message cannot be decoded or
+    ///   is not of the expected `DkgRound1Package` variant.
+    ///
+    /// # Returns
+    /// * `(u32, Vec<u8>)` - The identifier-package pair extracted from the
+    ///   wire message.
+    fn decode_round1_package(
+        payload: &[u8],
+    ) -> Result<(u32, Vec<u8>), Errors> {
+        match decode_wire(payload).map_err(|error: Errors| {
+            Errors::InvalidMessage(format!(
+                "Failed to decode FROST wire message: {}.",
+                error
+            ))
+        })? {
+            FrostWire::DkgRound1Package { identifier, package } => {
+                Ok((identifier, package))
+            },
+            _ => Err(Errors::InvalidMessage(
+                "Unexpected FROST wire message in round 1.".into(),
+            )),
+        }
+    }
+
+    /// Decode a `FrostWire::DkgRound2PackagesOutput` message and return the
+    /// list of (recipient, package) pairs.
+    ///
+    /// Extracted to keep `broadcast_round1` free of inline match arms.
+    ///
+    /// # Arguments
+    /// * `payload` (`&[u8]`) - Raw wire payload from the round 1 response.
+    ///
+    /// # Errors
+    /// * `Errors::InvalidMessage` - If the wire message cannot be decoded or
+    ///   is not of the expected `DkgRound2PackagesOutput` variant.
+    ///
+    /// # Returns
+    /// * `Vec<(u32, Vec<u8>)>` - The list of (recipient, package) pairs
+    ///   extracted from the wire message.
+    fn decode_round2_packages_output(
+        payload: &[u8],
+    ) -> Result<Vec<(u32, Vec<u8>)>, Errors> {
+        match decode_wire(payload).map_err(|error: Errors| {
+            Errors::InvalidMessage(format!(
+                "Failed to decode FROST wire message: {}",
+                error
+            ))
+        })? {
+            FrostWire::DkgRound2PackagesOutput { packages } => Ok(packages),
+            _ => Err(Errors::InvalidMessage(
+                "Unexpected FROST wire message in round 2 output.".into(),
+            )),
+        }
     }
 
     /// Start key generation sessions on all nodes in parallel and collect
@@ -188,77 +252,69 @@ impl FrostControllerKeyGeneration {
     /// * `Errors::InvalidMessage` - If decoding messages from nodes fails or
     ///   the expected round 1 package is missing.
     async fn collect_round1(&mut self) -> Result<(), Errors> {
-        let identifiers: Vec<u32> = self.node_identifiers()?;
+        let futures: FuturesUnordered<_> = self
+            .node_identifiers()?
+            .into_iter()
+            .map(|identifier: u32| {
+                let node: NodeIpcClient = self.node_clone(identifier)?;
 
-        let mut futures: FuturesUnordered<
-            impl Future<Output = Result<(u32, StartSessionResponse), Errors>>,
-        > = FuturesUnordered::new();
+                // Each node stores its key share under
+                // "<key_id>/<participant_id>" to avoid collisions in Vault.
+                let request: StartKeyGenerationSessionRequest =
+                    StartKeyGenerationSessionRequest {
+                        key_identifier: scoped(
+                            &self.key_identifier,
+                            identifier,
+                        ),
+                        algorithm: self.algorithm.as_str().to_string(),
+                        threshold: self.threshold,
+                        participants: self.participants,
+                        identifier,
+                    };
 
-        for identifier in identifiers {
-            let node: NodeIpcClient = self.node_mut(identifier)?.clone();
+                Ok(async move {
+                    let response: StartSessionResponse = node
+                        .start_key_generation(request)
+                        .await
+                        .map_err(map_status)?;
 
-            // Each node stores its key share under "<key_id>/<participant_id>"
-            // to avoid collisions in Vault.
-            let request: StartKeyGenerationSessionRequest =
-                StartKeyGenerationSessionRequest {
-                    key_identifier: format!(
-                        "{}/{}",
-                        self.key_identifier, identifier
-                    ),
-                    algorithm: self.algorithm.as_str().to_string(),
-                    threshold: self.threshold,
-                    participants: self.participants,
-                    identifier,
-                };
-
-            futures.push(async move {
-                let response: StartSessionResponse = node
-                    .start_key_generation(request)
-                    .await
-                    .map_err(map_status)?;
-
-                Ok::<(u32, StartSessionResponse), Errors>((
-                    identifier, response,
-                ))
-            });
-        }
+                    Ok::<(u32, StartSessionResponse), Errors>((
+                        identifier, response,
+                    ))
+                })
+            })
+            .collect::<Result<FuturesUnordered<_>, Errors>>()?;
 
         // Collect round 1 packages from all nodes as they complete. Each node
         // must return exactly one round 1 package. If not, the protocol cannot
         // proceed.
-        while let Some(result) = futures.next().await {
-            let (identifier, response): (u32, StartSessionResponse) = result?;
+        let results: Vec<(u32, StartSessionResponse)> = futures
+            .collect::<Vec<Result<_, _>>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
 
-            self.sessions.insert(identifier, response.session_identifier);
+        self.sessions = results
+            .iter()
+            .map(|(identifier, response): &(u32, StartSessionResponse)| {
+                (*identifier, response.session_identifier.clone())
+            })
+            .collect();
 
-            let wire: FrostWire = decode_wire(
-                &response
+        self.round1_packages = results
+            .iter()
+            .map(|(_, response): &(u32, StartSessionResponse)| {
+                let payload: &[u8] = &response
                     .messages
                     .first()
                     .ok_or(Errors::InvalidMessage(
                         "Missing round 1 message in start session response."
                             .into(),
                     ))?
-                    .payload,
-            )
-            .map_err(|error: Errors| {
-                Errors::InvalidMessage(format!(
-                    "Failed to decode FROST wire message: {}.",
-                    error
-                ))
-            })?;
-
-            match wire {
-                FrostWire::DkgRound1Package { identifier, package } => {
-                    self.round1_packages.insert(identifier, package);
-                },
-                _ => {
-                    return Err(Errors::InvalidMessage(
-                        "Unexpected FROST wire message in round 1.".into(),
-                    ));
-                },
-            }
-        }
+                    .payload;
+                Self::decode_round1_package(payload)
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
 
         Ok(())
     }
@@ -287,70 +343,71 @@ impl FrostControllerKeyGeneration {
         let payload: Vec<u8> =
             encode_wire(&FrostWire::DkgRound1Packages { packages })?;
 
-        let mut futures: FuturesUnordered<
-            impl Future<Output = Result<(u32, SubmitRoundResponse), Errors>>,
-        > = FuturesUnordered::new();
+        let futures: FuturesUnordered<_> = self
+            .sessions
+            .iter()
+            .map(|(&identifier, session_identifier): (&u32, &String)| {
+                let node: NodeIpcClient = self.node_clone(identifier)?;
+                let payload: Vec<u8> = payload.clone();
+                let session_identifier: String = session_identifier.clone();
 
-        for (identifier, session_identifier) in self.sessions.clone() {
-            let node: NodeIpcClient = self.node_mut(identifier)?.clone();
-            let payload: Vec<u8> = payload.clone();
+                Ok(async move {
+                    let response: SubmitRoundResponse = node
+                        .submit_round(SubmitRoundRequest {
+                            session_identifier,
+                            round: 1,
+                            from: None,
+                            to: Some(identifier),
+                            payload,
+                        })
+                        .await
+                        .map_err(map_status)?;
 
-            futures.push(async move {
-                let response: SubmitRoundResponse = node
-                    .submit_round(SubmitRoundRequest {
-                        session_identifier,
-                        round: 1,
-                        from: None,
-                        to: Some(identifier),
-                        payload,
-                    })
-                    .await
-                    .map_err(map_status)?;
-                Ok::<_, Errors>((identifier, response))
-            });
-        }
+                    let payload: &[u8] = &response
+                        .messages
+                        .first()
+                        .ok_or(Errors::InvalidMessage(
+                            "Missing round 2 message in submit round response."
+                                .into(),
+                        ))?
+                        .payload;
+
+                    let packages: Vec<(u32, Vec<u8>)> =
+                        Self::decode_round2_packages_output(payload)?;
+
+                    Ok::<(u32, Vec<(u32, Vec<u8>)>), Errors>((
+                        identifier, packages,
+                    ))
+                })
+            })
+            .collect::<Result<FuturesUnordered<_>, Errors>>()?;
 
         // Collect round 2 packages from all nodes as they complete. Each node
         // must return exactly one round 2 package output. If not, the protocol
         // cannot proceed.
-        while let Some(result) = futures.next().await {
-            let (identifier, response): (u32, SubmitRoundResponse) = result?;
+        let results: Vec<(u32, Vec<(u32, Vec<u8>)>)> = futures
+            .collect::<Vec<Result<_, _>>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
 
-            let wire: FrostWire = decode_wire(
-                &response
-                    .messages
-                    .first()
-                    .ok_or(Errors::InvalidMessage(
-                        "Missing round 2 message in submit round response."
-                            .into(),
-                    ))?
-                    .payload,
-            )
-            .map_err(|error: Errors| {
-                Errors::InvalidMessage(format!(
-                    "Failed to decode FROST wire message: {}",
-                    error
-                ))
-            })?;
-
-            match wire {
-                FrostWire::DkgRound2PackagesOutput { packages } => {
-                    // Store packages keyed by (sender, recipient) for
-                    // targeted delivery in broadcast_round2.
-                    let from_packages =
-                        self.round2_packages.entry(identifier).or_default();
-                    for (to_id, package) in packages {
-                        from_packages.insert(to_id, package);
-                    }
-                },
-                _ => {
-                    return Err(Errors::InvalidMessage(
-                        "Unexpected FROST wire message in round 2 output."
-                            .into(),
-                    ));
-                },
-            }
-        }
+        // Store packages keyed by (recipient, sender) for targeted delivery
+        // in broadcast_round2.
+        results
+            .into_iter()
+            .flat_map(|(sender, packages): (u32, Vec<(u32, Vec<u8>)>)| {
+                packages.into_iter().map(
+                    move |(recipient, package): (u32, Vec<u8>)| {
+                        (recipient, sender, package)
+                    },
+                )
+            })
+            .for_each(|(recipient, sender, package): (u32, u32, Vec<u8>)| {
+                self.round2_packages
+                    .entry(recipient)
+                    .or_default()
+                    .insert(sender, package);
+            });
 
         Ok(())
     }
@@ -369,58 +426,65 @@ impl FrostControllerKeyGeneration {
     async fn broadcast_round2(&mut self) -> Result<(), Errors> {
         let expected: usize = (self.participants as usize).saturating_sub(1);
 
-        let mut futures: FuturesUnordered<
-            impl Future<Output = Result<(), Errors>>,
-        > = FuturesUnordered::new();
+        let futures: FuturesUnordered<_> = self
+            .sessions
+            .iter()
+            .map(|(&identifier, session_identifier): (&u32, &String)| {
+                let packages_for_node: Vec<(u32, Vec<u8>)> = self
+                    .round2_packages
+                    .get(&identifier)
+                    .map(|senders: &BTreeMap<u32, Vec<u8>>| {
+                        senders
+                            .iter()
+                            .map(|(from_id, package): (&u32, &Vec<u8>)| {
+                                (*from_id, package.clone())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
-        for (identifier, session_identifier) in self.sessions.clone() {
-            // Collect all packages destined for this node (one per sender).
-            let mut packages_for_node: Vec<(u32, Vec<u8>)> = Vec::new();
-            for (from_identifier, recipients) in &self.round2_packages {
-                if let Some(package) = recipients.get(&identifier) {
-                    packages_for_node
-                        .push((*from_identifier, package.clone()));
+                // Each node must receive exactly one package from each other
+                // participant — if not, round 1 broadcast was incomplete.
+                if packages_for_node.len() != expected {
+                    return Err(Errors::InvalidState(format!(
+                        "Node {} expected {} round 2 packages, got {}.",
+                        identifier,
+                        expected,
+                        packages_for_node.len()
+                    )));
                 }
-            }
 
-            // Each node must receive exactly one package from each other
-            // participant — if not, round 1 broadcast was incomplete.
-            if packages_for_node.len() != expected {
-                return Err(Errors::InvalidState(format!(
-                    "Node {} expected {} round 2 packages, got {}.",
-                    identifier,
-                    expected,
-                    packages_for_node.len()
-                )));
-            }
+                let payload: Vec<u8> =
+                    encode_wire(&FrostWire::DkgRound2Packages {
+                        packages: packages_for_node,
+                    })?;
 
-            let payload: Vec<u8> =
-                encode_wire(&FrostWire::DkgRound2Packages {
-                    packages: packages_for_node,
-                })?;
+                let node: NodeIpcClient = self.node_clone(identifier)?;
+                let session_identifier: String = session_identifier.clone();
 
-            let node: NodeIpcClient = self.node_mut(identifier)?.clone();
+                Ok(async move {
+                    node.submit_round(SubmitRoundRequest {
+                        session_identifier,
+                        round: 2,
+                        from: None,
+                        to: Some(identifier),
+                        payload,
+                    })
+                    .await
+                    .map_err(map_status)?;
 
-            futures.push(async move {
-                node.submit_round(SubmitRoundRequest {
-                    session_identifier,
-                    round: 2,
-                    from: None,
-                    to: Some(identifier),
-                    payload,
+                    Ok::<(), Errors>(())
                 })
-                .await
-                .map_err(map_status)?;
-
-                Ok::<(), Errors>(())
-            });
-        }
+            })
+            .collect::<Result<FuturesUnordered<_>, Errors>>()?;
 
         // Wait for all round 2 broadcasts to complete. If any fail, the
         // protocol cannot proceed to finalization.
-        while let Some(result) = futures.next().await {
-            result?;
-        }
+        futures
+            .collect::<Vec<Result<_, _>>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(())
     }
@@ -433,75 +497,77 @@ impl FrostControllerKeyGeneration {
     /// * `Errors::InvalidState` - If public keys or packages are inconsistent
     ///   across nodes, or if no outputs were received.
     async fn collect_finalize(&mut self) -> Result<(), Errors> {
-        let mut futures: FuturesUnordered<
-            impl Future<Output = Result<(Vec<u8>, Vec<u8>), Errors>>,
-        > = FuturesUnordered::new();
+        let futures: FuturesUnordered<_> = self
+            .sessions
+            .iter()
+            .map(|(&identifier, session_identifier): (&u32, &String)| {
+                let node: NodeIpcClient = self.node_clone(identifier)?;
+                let session_identifier: String = session_identifier.clone();
 
-        for (identifier, session_identifier) in self.sessions.clone() {
-            let node: NodeIpcClient = self.node_mut(identifier)?.clone();
+                Ok(async move {
+                    let response: FinalizeSessionResponse = node
+                        .finalize(session_identifier)
+                        .await
+                        .map_err(map_status)?;
 
-            futures.push(async move {
-                let response: FinalizeSessionResponse = node
-                    .finalize(session_identifier)
-                    .await
-                    .map_err(map_status)?;
+                    match response.final_output {
+                        Some(FinalOutput::KeyGeneration(result)) => {
+                            Ok((result.public_key, result.public_key_package))
+                        },
+                        _ => Err(Errors::InvalidMessage(
+                            "Unexpected final output from node.".into(),
+                        )),
+                    }
+                })
+            })
+            .collect::<Result<FuturesUnordered<_>, Errors>>()?;
 
-                match response.final_output {
-                    Some(FinalOutput::KeyGeneration(result)) => {
-                        Ok((result.public_key, result.public_key_package))
-                    },
-                    _ => Err(Errors::InvalidMessage(
-                        "Unexpected final output from node.".into(),
-                    )),
-                }
-            });
-        }
+        let results: Vec<(Vec<u8>, Vec<u8>)> = futures
+            .collect::<Vec<Result<_, _>>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let mut public_keys: Vec<Vec<u8>> = Vec::new();
-        let mut public_key_packages: Vec<Vec<u8>> = Vec::new();
+        let public_keys: Vec<&Vec<u8>> =
+            results.iter().map(|(pk, _): &(Vec<u8>, Vec<u8>)| pk).collect();
 
-        while let Some(result) = futures.next().await {
-            let (public_key, public_key_package) = result?;
-            public_keys.push(public_key);
-            public_key_packages.push(public_key_package);
-        }
-
-        let first_public_key: Vec<u8> = public_keys
-            .first()
-            .ok_or(Errors::InvalidState("No public keys received.".into()))?
-            .clone();
-
-        let first_package: Vec<u8> = public_key_packages
-            .first()
-            .ok_or(Errors::InvalidState(
-                "No public key packages received.".into(),
-            ))?
-            .clone();
+        let public_key_packages: Vec<&Vec<u8>> =
+            results.iter().map(|(_, pkg): &(Vec<u8>, Vec<u8>)| pkg).collect();
 
         // All nodes must produce the same public key and public key package —
         // any mismatch indicates a protocol error or tampering.
-        for (index, (public_key, package)) in
-            public_keys.iter().zip(public_key_packages.iter()).enumerate()
-        {
-            if *public_key != first_public_key {
-                return Err(Errors::InvalidState(format!(
-                    "Public key mismatch at node index {}.",
-                    index
-                )));
+        if !public_keys.windows(2).all(|window: &[&Vec<u8>]| {
+            match (window.first(), window.get(1)) {
+                (Some(a), Some(b)) => a == b,
+                _ => false, // This case is impossible.
             }
-            if *package != first_package {
-                return Err(Errors::InvalidState(format!(
-                    "Public key package mismatch at node index {}.",
-                    index
-                )));
-            }
+        }) {
+            return Err(Errors::InvalidState(
+                "Public key mismatch across nodes.".into(),
+            ));
         }
+
+        if !public_key_packages.windows(2).all(|window: &[&Vec<u8>]| {
+            match (window.first(), window.get(1)) {
+                (Some(a), Some(b)) => a == b,
+                _ => false, // This case is impossible.
+            }
+        }) {
+            return Err(Errors::InvalidState(
+                "Public key package mismatch across nodes.".into(),
+            ));
+        }
+
+        let (public_key, public_key_package): (Vec<u8>, Vec<u8>) =
+            results.into_iter().next().ok_or(Errors::InvalidState(
+                "No finalization outputs received.".into(),
+            ))?;
 
         self.output = Some(ProtocolOutput::KeyGeneration {
             key_identifier: self.key_identifier.clone(),
             key_share: None,
-            public_key: first_public_key,
-            public_key_package: first_package,
+            public_key,
+            public_key_package,
         });
 
         Ok(())
@@ -556,10 +622,14 @@ impl Protocol for FrostControllerKeyGeneration {
         &mut self,
         _message: RoundMessage,
     ) -> Result<Option<RoundMessage>, Errors> {
+        // The controller DKG protocol is fully orchestrated within
+        // `next_round` — `handle_message` and `finalize` are never
+        // called concurrently and do not need abort checks.
         Ok(None)
     }
 
     async fn finalize(&mut self) -> Result<ProtocolOutput, Errors> {
+        // See `handle_message` — abort is only checked in `next_round`.
         self.output
             .take()
             .ok_or(Errors::InvalidState("Protocol not finished.".into()))

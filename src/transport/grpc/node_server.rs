@@ -11,6 +11,7 @@ use crate::{
     proto::signer::v1::{
         AbortSessionRequest,
         AbortSessionResponse,
+        AuxiliaryGenerationResult,
         CollectRoundRequest,
         CollectRoundResponse,
         FinalizeSessionRequest,
@@ -18,6 +19,7 @@ use crate::{
         KeyGenerationResult,
         RoundMessage,
         SignatureResult,
+        StartAuxiliaryGenerationSessionRequest,
         StartKeyGenerationSessionRequest,
         StartSessionResponse,
         StartSigningSessionRequest,
@@ -28,10 +30,14 @@ use crate::{
     },
     protocols::{
         algorithm::Algorithm,
+        cggmp24::node::tasks::ecdsa_secp256k1::compute_parties,
         types::{
+            AuxiliaryGenerationInit,
+            DefaultAuxiliaryGenerationInit,
             DefaultKeyGenerationInit,
             DefaultSigningInit,
             KeyGenerationInit,
+            NodeAuxiliaryGenerationInit,
             NodeKeyGenerationInit,
             NodeSigningInit,
             ProtocolInit,
@@ -39,7 +45,13 @@ use crate::{
             SigningInit,
         },
     },
-    secrets::{types::KeyShare, vault::api::VaultProvider},
+    secrets::{
+        types::KeyShare,
+        vault::{
+            api::VaultProvider,
+            key_path::{base, scoped},
+        },
+    },
     service::api::EngineApi,
     transport::errors::Errors,
 };
@@ -111,10 +123,16 @@ impl<
                 },
             };
 
+        // Extract the base key identifier by removing the per-participant
+        // suffix appended by the controller (e.g. "my-key/0" → "my-key").
+        // This base key is used for signer set derivation and as the
+        // key_identifier in the protocol init.
+        let base_key_identifier: &str = base(&request.key_identifier);
+
         let init: ProtocolInit =
             ProtocolInit::Signing(SigningInit::Node(NodeSigningInit {
                 common: DefaultSigningInit {
-                    key_identifier: request.key_identifier.clone(),
+                    key_identifier: base_key_identifier.into(),
                     algorithm,
                     threshold: request.threshold,
                     participants: request.participants,
@@ -131,9 +149,27 @@ impl<
             Vec<RoundMessage>,
         ) = self.engine.start_session(init).await?;
 
+        // For CGGMP24 signing, compute the signer set so the controller can
+        // verify all nodes independently derived the same participants.
+        let signer_set: Vec<u32> = if algorithm
+            == Algorithm::Cggmp24EcdsaSecp256k1
+        {
+            compute_parties(
+                base_key_identifier,
+                request.threshold,
+                request.participants,
+            )?
+            .into_iter()
+            .map(|participant_identifier: u16| participant_identifier as u32)
+            .collect()
+        } else {
+            Vec::new()
+        };
+
         Ok(Response::new(StartSessionResponse {
             session_identifier: session_identifier.to_string(),
             messages: round_message,
+            signer_set,
         }))
     }
 
@@ -192,6 +228,71 @@ impl<
         Ok(Response::new(StartSessionResponse {
             session_identifier: session_identifier.to_string(),
             messages: round_message,
+            signer_set: Vec::new(),
+        }))
+    }
+
+    /// Start a new auxiliary generation session.
+    ///
+    /// # Arguments
+    /// * `request` (`Request<StartAuxiliaryGenerationSessionRequest>`) -
+    ///   Incoming gRPC request.
+    ///
+    /// # Errors
+    /// * `Status` - If authentication fails or session creation fails.
+    ///
+    /// # Returns
+    /// * `Result<Response<StartSessionResponse>, Status>` - gRPC response or
+    ///   error.
+    #[instrument(skip(self, request), fields(
+        key_identifier = %request.get_ref().key_identifier,
+        session = Empty
+    ))]
+    async fn start_auxiliary_generation_session(
+        &self,
+        request: Request<StartAuxiliaryGenerationSessionRequest>,
+    ) -> Result<Response<StartSessionResponse>, Status> {
+        tracing::debug!(
+            "Starting auxiliary generation session for key {}.",
+            request.get_ref().key_identifier
+        );
+
+        let request: &StartAuxiliaryGenerationSessionRequest =
+            request.get_ref();
+
+        let algorithm: Algorithm = Algorithm::from_str(&request.algorithm)
+            .map_err(|error: ParseError| {
+                Errors::UnsupportedAlgorithm(error.to_string())
+            })?;
+
+        // Retrieve the incomplete key share from vault using the key
+        // identifier and the auxiliary identifier.
+        let vault_key: String =
+            scoped(&request.key_identifier, request.identifier);
+        let incomplete_key_share: KeyShare =
+            self.vault.get_key_share(&vault_key).await?;
+
+        let init: ProtocolInit = ProtocolInit::AuxiliaryGeneration(
+            AuxiliaryGenerationInit::Node(NodeAuxiliaryGenerationInit {
+                common: DefaultAuxiliaryGenerationInit {
+                    key_identifier: request.key_identifier.clone(),
+                    algorithm,
+                    participants: request.participants,
+                },
+                identifier: request.identifier,
+                incomplete_key_share,
+            }),
+        );
+
+        let (session_identifier, messages): (
+            SessionIdentifier,
+            Vec<RoundMessage>,
+        ) = self.engine.start_session(init).await?;
+
+        Ok(Response::new(StartSessionResponse {
+            session_identifier: session_identifier.to_string(),
+            messages,
+            signer_set: Vec::new(),
         }))
     }
 
@@ -340,7 +441,7 @@ impl<
             } => {
                 // Ensure key share is present in the output.
                 let key_share: KeyShare = key_share.ok_or_else(|| {
-                    Errors::InvalidState("Missing key share in output".into())
+                    Errors::InvalidState("Missing key share in output.".into())
                 })?;
 
                 // Store key share in vault in a blocking task.
@@ -349,6 +450,30 @@ impl<
                 Ok(Response::new(FinalizeSessionResponse {
                     final_output: Some(FinalOutput::KeyGeneration(
                         KeyGenerationResult { public_key, public_key_package },
+                    )),
+                }))
+            },
+
+            // Auxiliary generation output: store key share in vault, and
+            // return success to the caller.
+            ProtocolOutput::AuxiliaryGeneration {
+                key_identifier,
+                key_share,
+            } => {
+                let key_share: KeyShare = key_share.ok_or_else(|| {
+                    Errors::InvalidState(
+                        "Missing key share in auxiliary generation output."
+                            .into(),
+                    )
+                })?;
+
+                // Erase the incomplete key share from vault, and store the
+                // complete key share under the same identifier.
+                self.vault.store_key_share(&key_identifier, key_share).await?;
+
+                Ok(Response::new(FinalizeSessionResponse {
+                    final_output: Some(FinalOutput::AuxiliaryGeneration(
+                        AuxiliaryGenerationResult {},
                     )),
                 }))
             },

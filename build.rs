@@ -2,6 +2,8 @@ use std::{env::var, error::Error, path::Path};
 
 use tonic_prost_build::configure;
 
+const CARGO_FEATURE_FAST_CRYPTO: &str = "CARGO_FEATURE_TEST_FAST_CRYPTO";
+
 const PROTO_DIRECTORY: &str = "proto/signer/v1";
 const PROTO_FILENAME: &str = "signer.proto";
 const PROTO_DESCRIPTOR: &str = "proto_descriptor.bin";
@@ -15,6 +17,16 @@ const PROTO_DESCRIPTOR: &str = "proto_descriptor.bin";
 /// * `Ok(())` - if the build script completes successfully.
 /// * `Err(Box<dyn Error>)` - if an error occurs during protobuf compilation.
 fn main() -> Result<(), Box<dyn Error>> {
+    // Warn if the `test-fast-crypto` feature is enabled, as it should only be
+    // used for testing and not in production.
+    if var(CARGO_FEATURE_FAST_CRYPTO).is_ok() {
+        println!(
+            "cargo:warning=test-fast-crypto is enabled. This uses reduced \
+            Paillier prime sizes and must never be used in production. \
+            Please disable the `test-fast-crypto` feature for production use."
+        );
+    }
+
     let proto_filepath: String = Path::new(PROTO_DIRECTORY)
         .join(PROTO_FILENAME)
         .to_string_lossy()

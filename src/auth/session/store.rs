@@ -43,9 +43,9 @@ impl SessionStore {
     /// Create a new session and return its identifier.
     ///
     /// # Returns
-    /// * `SessionId` - The identifier of the newly created session.
+    /// * `SessionIdentifier` - The identifier of the newly created session.
     pub fn create(&self) -> SessionIdentifier {
-        let id: SessionIdentifier = SessionIdentifier::new();
+        let identifier: SessionIdentifier = SessionIdentifier::new();
 
         let entry: SessionEntry = SessionEntry {
             state: SessionState::Initialized,
@@ -56,9 +56,9 @@ impl SessionStore {
             '_,
             HashMap<SessionIdentifier, SessionEntry>,
         > = Self::write_guard(&self.sessions);
-        guard.insert(id, entry);
+        guard.insert(identifier, entry);
 
-        id
+        identifier
     }
 
     /// Execute a state transition on a session.
@@ -67,7 +67,7 @@ impl SessionStore {
     /// and valid error propagation.
     ///
     /// # Arguments
-    /// * `id` (`SessionId`) - Session identifier.
+    /// * `identifier` (`SessionIdentifier`) - Session identifier.
     /// * `func` (`F`) - Closure that performs the state transition.
     ///
     /// # Errors
@@ -78,7 +78,7 @@ impl SessionStore {
     /// * `R` - Returns the result of the closure on success.
     pub fn with_session<F, R>(
         &self,
-        id: SessionIdentifier,
+        identifier: SessionIdentifier,
         func: F,
     ) -> Result<R, Errors>
     where
@@ -90,12 +90,12 @@ impl SessionStore {
         > = Self::write_guard(&self.sessions);
 
         let entry: &mut SessionEntry = guard
-            .get_mut(&id)
-            .ok_or(Errors::SessionNotFound(id.to_string()))?;
+            .get_mut(&identifier)
+            .ok_or(Errors::SessionNotFound(identifier.to_string()))?;
 
         if entry.last_updated.elapsed() > self.ttl {
-            guard.remove(&id);
-            return Err(Errors::SessionNotFound(id.to_string()));
+            guard.remove(&identifier);
+            return Err(Errors::SessionNotFound(identifier.to_string()));
         }
 
         let result: R = func(&mut entry.state)?;
@@ -107,22 +107,24 @@ impl SessionStore {
     /// Remove a session explicitly.
     ///
     /// # Arguments
-    /// * `id` (`SessionId`) - Session identifier to remove.
+    /// * `identifier` (`SessionIdentifier`) - Session identifier to remove.
     ///
     /// # Returns
     /// * `()` - Returns unit on success.
-    pub fn remove(&self, id: SessionIdentifier) {
+    pub fn remove(&self, identifier: SessionIdentifier) {
         let mut guard: RwLockWriteGuard<
             '_,
             HashMap<SessionIdentifier, SessionEntry>,
         > = Self::write_guard(&self.sessions);
-        guard.remove(&id);
+        guard.remove(&identifier);
     }
 
     /// Obtain a write lock, recovering from poison if necessary.
     ///
     /// Poisoning is treated as non-fatal in this context, as session
-    /// state can be safely recovered.
+    /// state can be safely recovered. A warning is emitted when poison is
+    /// detected — it signals a thread panicked while holding the lock, which
+    /// is worth surfacing even if the data is recoverable.
     ///
     /// # Arguments
     /// * `lock` (`&RwLock<T>`) - RwLock to lock.
@@ -132,7 +134,13 @@ impl SessionStore {
     pub fn write_guard<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
         match lock.write() {
             Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
+            Err(poisoned) => {
+                tracing::warn!(
+                    "Session store RwLock was poisoned — a thread likely \
+                    panicked while holding it. Recovering inner value."
+                );
+                poisoned.into_inner()
+            },
         }
     }
 }

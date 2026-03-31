@@ -20,6 +20,11 @@ service Node {
   rpc StartKeyGenerationSession (StartKeyGenerationSessionRequest)
   returns (StartSessionResponse);
 
+  /// Start a new auxiliary generation session and execute round 0.
+  /// Returns the session identifier and the initial round messages.
+  rpc StartAuxiliaryGenerationSession (StartAuxiliaryGenerationSessionRequest)
+  returns (StartSessionResponse);
+
   /// Deliver a round message to the node and return any messages produced
   /// synchronously. For asynchronous protocols, use CollectRound to retrieve
   /// messages produced by the worker after all round messages are delivered.
@@ -137,12 +142,30 @@ message StartKeyGenerationSessionRequest {
   uint32 identifier = 5;
 }
 
+/// Request to start a new auxiliary generation session on a node.
+message StartAuxiliaryGenerationSessionRequest {
+  /// Stable identifier for the auxiliary data being generated.
+  string key_identifier = 1;
+  /// Algorithm identifier.
+  string algorithm = 2;
+  /// Minimum number of participants required to sign (t).
+  uint32 participants = 3;
+  /// Index of this participant in the protocol (0-based for CGGMP24,
+  /// 1-based for FROST).
+  uint32 identifier = 4;
+}
+
 /// Response to a session start request.
 message StartSessionResponse {
   /// Unique identifier for the created session.
   string session_identifier = 1;
   /// Round 0 messages to be delivered to other participants.
   repeated RoundMessage messages = 2;
+  /// Signer set derived by the node for CGGMP24 signing sessions.
+  /// Contains the participant indices selected for signing, in sorted order.
+  /// Empty for key generation, auxiliary generation, and non-CGGMP24 signing.
+  /// The controller uses this to verify all nodes computed the same set.
+  repeated uint32 signer_set = 3;
 }
 
 /// Request to deliver a round message to a node.
@@ -210,6 +233,8 @@ message FinalizeSessionResponse {
     SignatureResult signature = 1;
     /// Produced by key generation sessions.
     KeyGenerationResult key_generation = 2;
+    /// Produced by auxiliary generation sessions.
+    AuxiliaryGenerationResult auxiliary_generation = 3;
   }
 }
 
@@ -247,6 +272,9 @@ message EcdsaSignature {
   /// Recovery identifier — used to recover the public key from the signature.
   uint32 v = 3;
 }
+
+/// Final output of an auxiliary generation session.
+message AuxiliaryGenerationResult {}
 
 /// Request to abort a session on a node.
 message AbortSessionRequest {

@@ -1,7 +1,6 @@
 //! Main entrypoint for application.
 
-use clap::{Parser, Subcommand};
-use mpc_signer_engine::{
+use app::{
     config::{
         api::RuntimeConfig,
         controller::ControllerRuntimeConfig,
@@ -14,6 +13,7 @@ use mpc_signer_engine::{
     },
     transport::errors::Errors,
 };
+use clap::{Parser, Subcommand};
 use tokio::sync::oneshot::{Sender, channel};
 
 /// CLI entrypoint.
@@ -51,21 +51,24 @@ enum Command {
 /// * `()` - On successful execution.
 #[tokio::main]
 async fn main() -> Result<(), Errors> {
+    // Allow panic usage in CLI parsing as it is a common pattern and does
+    // not pose a security risk in this context.
     let cli: Cli = Cli::parse();
-    let (ready_tx, _): (Sender<()>, _) = channel();
+
+    let (ready_transmitter, _): (Sender<()>, _) = channel();
 
     match cli.command {
         // Run as node.
         Command::Node { config } => {
             let runtime_config: NodeRuntimeConfig =
                 NodeRuntimeConfig::load_from_file(&config)?;
-            NodeRuntime::run(runtime_config, ready_tx).await
+            NodeRuntime::run(runtime_config, ready_transmitter).await
         },
         // Run as controller.
         Command::Controller { config } => {
             let runtime_config: ControllerRuntimeConfig =
                 ControllerRuntimeConfig::load_from_file(&config)?;
-            ControllerRuntime::run(runtime_config, ready_tx).await
+            ControllerRuntime::run(runtime_config, ready_transmitter).await
         },
     }
 }

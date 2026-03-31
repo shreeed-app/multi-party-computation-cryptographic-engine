@@ -23,8 +23,11 @@ use crate::{
     protocols::{
         algorithm::Algorithm,
         types::{
+            AuxiliaryGenerationInit,
+            ControllerAuxiliaryGenerationInit,
             ControllerKeyGenerationInit,
             ControllerSigningInit,
+            DefaultAuxiliaryGenerationInit,
             DefaultKeyGenerationInit,
             DefaultSigningInit,
             KeyGenerationInit,
@@ -97,38 +100,69 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
                 },
             };
 
-        let init: ProtocolInit = ProtocolInit::KeyGeneration(
-            KeyGenerationInit::Controller(ControllerKeyGenerationInit {
-                common: DefaultKeyGenerationInit {
-                    key_identifier: request.key_identifier.clone(),
-                    algorithm,
-                    threshold: request.threshold,
-                    participants: request.participants,
-                },
-                nodes: self.nodes.clone(),
-            }),
-        );
+        // First phase: key generation, the controller orchestrates the key
+        // generation protocol, and nodes store their incomplete key shares
+        // in Vault.
+        let (session_id, _): (SessionIdentifier, Vec<RoundMessage>) = self
+            .engine
+            .start_session(ProtocolInit::KeyGeneration(
+                KeyGenerationInit::Controller(ControllerKeyGenerationInit {
+                    common: DefaultKeyGenerationInit {
+                        key_identifier: request.key_identifier.clone(),
+                        algorithm,
+                        threshold: request.threshold,
+                        participants: request.participants,
+                    },
+                    nodes: self.nodes.clone(),
+                }),
+            ))
+            .await?;
 
-        // Start controller session.
-        let (session_id, _): (SessionIdentifier, Vec<RoundMessage>) =
-            self.engine.start_session(init).await?;
-
-        match self.engine.finalize(session_id).await? {
-            ProtocolOutput::KeyGeneration {
-                public_key,
-                public_key_package,
-                ..
-            } => Ok(Response::new(GenerateKeyResponse {
-                result: Some(KeyGenerationResult {
+        // Finalize the protocol to get the public key and public key package.
+        let (public_key, public_key_package): (Vec<u8>, Vec<u8>) =
+            match self.engine.finalize(session_id).await? {
+                ProtocolOutput::KeyGeneration {
                     public_key,
                     public_key_package,
-                }),
-            })),
+                    ..
+                } => (public_key, public_key_package),
+                _ => {
+                    return Err(Errors::Internal(
+                        "Invalid key generation output.".into(),
+                    )
+                    .into());
+                },
+            };
 
-            _ => {
-                Err(Errors::Internal("Invalid protocol output.".into()).into())
-            },
+        // Second phase: auxiliary protocol to reconstruct the key shares in
+        // the nodes' memory, so they can be used for signing without fetching
+        // from Vault again.
+        if algorithm == Algorithm::Cggmp24EcdsaSecp256k1 {
+            let (session_id, _): (SessionIdentifier, Vec<RoundMessage>) = self
+                .engine
+                .start_session(ProtocolInit::AuxiliaryGeneration(
+                    AuxiliaryGenerationInit::Controller(
+                        ControllerAuxiliaryGenerationInit {
+                            common: DefaultAuxiliaryGenerationInit {
+                                key_identifier: request.key_identifier.clone(),
+                                algorithm,
+                                participants: request.participants,
+                            },
+                            nodes: self.nodes.clone(),
+                        },
+                    ),
+                ))
+                .await?;
+
+            self.engine.finalize(session_id).await?;
         }
+
+        Ok(Response::new(GenerateKeyResponse {
+            result: Some(KeyGenerationResult {
+                public_key,
+                public_key_package,
+            }),
+        }))
     }
 
     /// Sign message using distributed protocol.

@@ -1,12 +1,17 @@
 //! Controller runtime module.
 
 use std::{
+    io::Error as IoError,
     net::{AddrParseError, SocketAddr},
     time::Duration,
 };
 
 use async_trait::async_trait;
-use tokio::sync::oneshot::Sender;
+use futures::{future::BoxFuture, stream::unfold};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::oneshot::Sender,
+};
 use tonic::transport::{Error, Server};
 use tonic_middleware::RequestInterceptorLayer;
 use tonic_reflection::server::{
@@ -24,7 +29,7 @@ use crate::{
         FILE_DESCRIPTOR_SET,
         signer::v1::controller_server::ControllerServer,
     },
-    runtime::api::RuntimeApi,
+    runtime::{api::RuntimeApi, types::IncomingStream},
     service::controller_engine::ControllerEngine,
     transport::{
         errors::Errors,
@@ -82,7 +87,7 @@ impl RuntimeApi for ControllerRuntime {
 
         // Create the gRPC server for the controller, injecting the controller
         // engine and node clients.
-        let server: ControllerIpcServer<ControllerEngine> =
+        let ipc_server: ControllerIpcServer<ControllerEngine> =
             ControllerIpcServer::new(ControllerEngine::default(), nodes);
         tracing::debug!("Initialized controller IPC server.");
 
@@ -107,19 +112,39 @@ impl RuntimeApi for ControllerRuntime {
                 })?;
         tracing::debug!("Configured gRPC reflection service.");
 
-        // Start the gRPC server and serve requests.
-        let server: impl Future<Output = Result<(), Error>> =
-            Server::builder()
-                .layer(ConcurrencyLimitLayer::new(100))
-                .layer(TimeoutLayer::new(Duration::from_secs(100)))
-                .layer(auth_layer)
-                .add_service(reflection_service)
-                .add_service(ControllerServer::new(server))
-                .serve(address);
+        // Bind the TCP socket before signalling readiness so that the caller
+        // can connect immediately after receiving the ready signal.
+        let listener: TcpListener =
+            TcpListener::bind(address).await.map_err(|error: IoError| {
+                Errors::ConfigError(error.to_string())
+            })?;
+        tracing::debug!(%address, "TCP listener bound.");
 
         ready.send(()).ok();
 
-        server.await?;
+        let incoming: IncomingStream = unfold(
+            listener,
+            |listener: TcpListener| -> BoxFuture<'static, _> {
+                Box::pin(async move {
+                    let result: Result<TcpStream, IoError> = listener
+                        .accept()
+                        .await
+                        .map(|(tcp_stream, _): (TcpStream, SocketAddr)| {
+                            tcp_stream
+                        });
+                    Some((result, listener))
+                })
+            },
+        );
+
+        Server::builder()
+            .layer(ConcurrencyLimitLayer::new(100))
+            .layer(TimeoutLayer::new(Duration::from_secs(600)))
+            .layer(auth_layer)
+            .add_service(reflection_service)
+            .add_service(ControllerServer::new(ipc_server))
+            .serve_with_incoming(incoming)
+            .await?;
 
         Ok(())
     }

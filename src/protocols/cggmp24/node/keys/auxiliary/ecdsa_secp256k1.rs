@@ -1,10 +1,15 @@
 //! CGGMP24 ECDSA Secp256k1 auxiliary info generation node protocol.
 
-use std::{num::TryFromIntError, sync::Arc};
+use std::{
+    num::TryFromIntError,
+    sync::Arc,
+    thread::{JoinHandle, spawn},
+};
 
 use async_trait::async_trait;
 use cggmp24::{
     KeyShare as CggmpKeyShare,
+    PregeneratedPrimes,
     generic_ec::curves::Secp256k1,
     key_share::{
         DirtyAuxInfo,
@@ -38,6 +43,7 @@ use crate::{
                 },
                 protocol::{Cggmp24NodeProtocol, CggmpNodeProtocol},
             },
+            pregenerated_primes::pregenerate_primes,
             security_level::Cggmp24SecurityLevel,
             stored_key::{ArchivedCggmp24StoredKey, Cggmp24StoredKey},
         },
@@ -228,6 +234,13 @@ impl Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration {
             incomplete_key_share: init.incomplete_key_share,
         };
 
+        // Spawn Paillier prime generation on a dedicated OS thread so all
+        // the fast worker can finish prime generation in parallel without
+        // blocking each other.
+        let primes_handle: JoinHandle<
+            PregeneratedPrimes<Cggmp24SecurityLevel>,
+        > = spawn(move || pregenerate_primes(identifier));
+
         Ok(Self(Cggmp24NodeProtocol::new(
             data,
             init.identifier,
@@ -238,6 +251,7 @@ impl Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration {
                 identifier,
                 participants,
                 execution_identifier_bytes,
+                primes_handle,
             },
         )))
     }

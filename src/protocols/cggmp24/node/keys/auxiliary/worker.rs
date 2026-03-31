@@ -1,5 +1,7 @@
 //! CGGMP24 auxiliary generation protocol descriptor.
 
+use std::thread::JoinHandle;
+
 use cggmp24::{
     ExecutionId,
     KeyRefreshError,
@@ -14,7 +16,6 @@ use tokio::sync::Notify;
 
 use crate::protocols::cggmp24::{
     node::worker::{CggmpProtocol, WorkerDone, drive},
-    pregenerated_primes::pregenerate_primes,
     security_level::Cggmp24SecurityLevel,
 };
 
@@ -36,6 +37,8 @@ pub struct AuxiliaryGenerationProtocol {
     pub participants: u16,
     /// Unique identifier for the auxiliary information generation operation.
     pub execution_identifier_bytes: Vec<u8>,
+    /// Handle to the prime generation thread spawned during protocol init.
+    pub primes_handle: JoinHandle<PregeneratedPrimes<Cggmp24SecurityLevel>>,
 }
 
 impl CggmpProtocol for AuxiliaryGenerationProtocol {
@@ -53,15 +56,23 @@ impl CggmpProtocol for AuxiliaryGenerationProtocol {
 
         let mut random: OsRng = OsRng;
 
-        // Pre-generate Paillier primes to speed up the protocol execution, as
-        // prime generation is the most time-consuming part of the protocol.
-        // This allows us to have a more accurate measurement of the
-        // protocol execution time without being dominated by prime generation
-        // time, which is not the focus of our performance optimizations.
-        tracing::info!("Pre-generating Paillier primes.");
+        // Wait for the prime generation thread spawned during protocol init.
+        // All nodes start their prime generation threads simultaneously in
+        // `start_session`, so by the time the first incoming message arrives
+        // the slowest node's primes are ready — avoiding the `recv_timeout`
+        // that would occur if prime generation ran here instead.
+        tracing::info!("Waiting for Paillier primes.");
         let pregenerated_primes: PregeneratedPrimes<Cggmp24SecurityLevel> =
-            pregenerate_primes(self.identifier);
-        tracing::info!("Paillier primes pregenerated.");
+            match self.primes_handle.join() {
+                Ok(primes) => primes,
+                Err(_) => {
+                    tracing::error!(
+                        "Paillier prime generation thread panicked."
+                    );
+                    return None;
+                },
+            };
+        tracing::info!("Paillier primes ready.");
 
         let state_machine: impl StateMachine<
             Msg = Self::Message,

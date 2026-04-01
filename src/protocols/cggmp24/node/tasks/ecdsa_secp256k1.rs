@@ -472,9 +472,6 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
     /// Handle an incoming signing protocol message and deliver it to the
     /// worker.
     ///
-    /// Drains pending messages after delivery — the worker may have produced
-    /// new outgoing messages or a completion signal synchronously in response.
-    ///
     /// # Errors
     /// * `Errors::Aborted` - If the protocol has been aborted or the worker
     ///   channel is disconnected.
@@ -488,17 +485,9 @@ impl Protocol for Cggmp24EcdsaSecp256k1NodeSigning {
             return Err(Errors::Aborted("Protocol has been aborted.".into()));
         }
 
-        // Deliver the message to the worker — P2P if a recipient is set,
-        // broadcast otherwise.
         self.0.deliver_message(message)?;
 
-        // Drain pending after delivering — the worker may have produced new
-        // outgoing messages or a completion signal synchronously in response.
-        // drain_pending is also called in next_round to catch messages
-        // produced asynchronously between rounds.
-        self.0.drain_pending()?;
-
-        Ok(self.0.pending_messages.pop_front())
+        Ok(None)
     }
 
     /// Consume and return the final signing output.

@@ -25,7 +25,7 @@ use crate::{
     auth::bearer_server::BearerAuthInterceptor,
     config::node::NodeRuntimeConfig,
     logging::engine::LoggingEngine,
-    proto::{FILE_DESCRIPTOR_SET, signer::v1::node_server::NodeServer},
+    proto::{FILE_DESCRIPTOR_SET, engine::v1::node_server::NodeServer},
     runtime::{api::RuntimeApi, types::IncomingStream},
     secrets::vault::hashicorp::HashicorpVaultProvider,
     service::{builder::EngineBuilder, node_engine::NodeEngine},

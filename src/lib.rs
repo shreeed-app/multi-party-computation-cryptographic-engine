@@ -33,10 +33,10 @@ pub mod transport;
 #[allow(security_indexing_usage, security_missing_type, security_unsafe_usage)]
 pub mod proto {
     /// Signer service definitions.
-    pub mod signer {
-        /// Version 1 of the signer service.
+    pub mod engine {
+        /// Version 1 of the engine service.
         pub mod v1 {
-            include!(concat!(env!("OUT_DIR"), "/signer.v1.rs"));
+            include!(concat!(env!("OUT_DIR"), "/engine.v1.rs"));
         }
     }
 

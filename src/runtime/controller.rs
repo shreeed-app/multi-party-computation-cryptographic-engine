@@ -27,7 +27,7 @@ use crate::{
     logging::engine::LoggingEngine,
     proto::{
         FILE_DESCRIPTOR_SET,
-        signer::v1::controller_server::ControllerServer,
+        engine::v1::controller_server::ControllerServer,
     },
     runtime::{api::RuntimeApi, types::IncomingStream},
     service::controller_engine::ControllerEngine,

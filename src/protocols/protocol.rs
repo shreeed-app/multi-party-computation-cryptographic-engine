@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use tokio::sync::Notify;
 
 use crate::{
-    proto::signer::v1::RoundMessage,
+    proto::engine::v1::RoundMessage,
     protocols::{
         algorithm::Algorithm,
         types::{ProtocolOutput, Round},

@@ -4,8 +4,8 @@ use tonic_prost_build::configure;
 
 const CARGO_FEATURE_FAST_CRYPTO: &str = "CARGO_FEATURE_TEST_FAST_CRYPTO";
 
-const PROTO_DIRECTORY: &str = "proto/signer/v1";
-const PROTO_FILENAME: &str = "signer.proto";
+const PROTO_DIRECTORY: &str = "proto/engine/v1";
+const PROTO_FILENAME: &str = "engine.proto";
 const PROTO_DESCRIPTOR: &str = "proto_descriptor.bin";
 
 /// Build script to compile protobuf definitions into Rust code.

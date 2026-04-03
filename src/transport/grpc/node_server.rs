@@ -8,7 +8,7 @@ use tracing::{field::Empty, instrument};
 
 use crate::{
     auth::session::identifier::SessionIdentifier,
-    proto::signer::v1::{
+    proto::engine::v1::{
         AbortSessionRequest,
         AbortSessionResponse,
         AuxiliaryGenerationResult,

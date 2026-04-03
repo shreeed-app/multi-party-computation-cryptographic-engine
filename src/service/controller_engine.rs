@@ -10,7 +10,7 @@ use tracing::instrument;
 
 use crate::{
     auth::session::identifier::SessionIdentifier,
-    proto::signer::v1::RoundMessage,
+    proto::engine::v1::RoundMessage,
     protocols::{
         factory::ProtocolFactory,
         protocol::Protocol,

@@ -1,3 +1,5 @@
+name: "cryptographic-engine"
+
 services:
   engine:
     image: app:latest

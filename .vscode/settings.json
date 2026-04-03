@@ -22,6 +22,7 @@
     },
     "cSpell.words": [
         "allocvec",
+        "autonumber",
         "bitlen",
         "bytecheck",
         "catthehacker",
@@ -40,6 +41,8 @@
         "keygen",
         "miri",
         "nocapture",
+        "noexec",
+        "nosuid",
         "oneshot",
         "paillier",
         "pedersen",
@@ -56,6 +59,7 @@
         "secp",
         "swatinem",
         "thiserror",
+        "tmpfs",
         "vaultrs",
         "zeroize",
         "zeroized"

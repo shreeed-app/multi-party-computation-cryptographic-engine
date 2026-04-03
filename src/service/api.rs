@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::{
     auth::session::identifier::SessionIdentifier,
-    proto::signer::v1::RoundMessage,
+    proto::engine::v1::RoundMessage,
     protocols::types::{ProtocolInit, ProtocolOutput},
     transport::errors::Errors,
 };

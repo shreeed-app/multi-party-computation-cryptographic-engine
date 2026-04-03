@@ -1,7 +1,6 @@
-# Multi-Party Computation Engine
+# Multi-Party Computation Cryptographic Engine
 
-This document describes the setup and prerequisites for the Multi-Party Computation (MPC) Engine.
-This engine is designed to securely manage key shares and perform signing operations in a distributed manner.
+This document outlines the setup and prerequisites for the multi-party computation cryptographic engine, a distributed system responsible for secure key generation and threshold signing using protocols such as FROST and CGGMP24. The engine coordinates multiple nodes to manage key shares, execute cryptographic state machines, and produce signatures without ever reconstructing private keys.
 
 ## Compatibility
 

@@ -25,7 +25,7 @@ use rkyv::{Archived, access, deserialize, rancor::Error as RkyvError};
 use zeroize::Zeroize;
 
 use crate::{
-    proto::signer::v1::{RoundMessage, signature_result::FinalSignature},
+    proto::engine::v1::{RoundMessage, signature_result::FinalSignature},
     protocols::{
         algorithm::Algorithm,
         codec::{decode_wire, encode_wire},

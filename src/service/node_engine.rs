@@ -15,7 +15,7 @@ use crate::{
         state::SessionState,
         store::SessionStore,
     },
-    proto::signer::v1::{self as proto, RoundMessage},
+    proto::engine::v1::{self as proto, RoundMessage},
     protocols::{
         factory::ProtocolFactory,
         protocol::Protocol,

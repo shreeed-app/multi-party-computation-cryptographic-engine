@@ -12,7 +12,7 @@ use app::{
         controller::{ControllerRuntimeConfig, NodeConfig},
         ipc::{AuthConfig, ControllerIpcConfig, NodeIpcConfig},
     },
-    proto::{FILE_DESCRIPTOR_SET, signer::v1::node_server::NodeServer},
+    proto::{FILE_DESCRIPTOR_SET, engine::v1::node_server::NodeServer},
     runtime::{
         api::RuntimeApi,
         controller::ControllerRuntime,

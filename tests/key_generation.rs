@@ -5,7 +5,7 @@ mod helpers;
 use app::{
     auth::bearer_client::ClientAuthInterceptor,
     config::ipc::AuthConfig,
-    proto::signer::v1::{
+    proto::engine::v1::{
         GenerateKeyRequest,
         GenerateKeyResponse,
         KeyGenerationResult,

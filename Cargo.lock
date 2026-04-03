@@ -1965,7 +1965,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mpc-signer-engine"
+name = "multi-party-computation-cryptographic-engine"
 version = "1.0.0"
 dependencies = [
  "async-trait",

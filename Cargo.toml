@@ -1,9 +1,9 @@
 [package]
-name = "mpc-signer-engine"
+name = "multi-party-computation-cryptographic-engine"
 version = "1.0.0"
 edition = "2024"
 license = "MIT"
-description = "Production-grade MPC cryptographic engine."
+description = "Production-grade multi-party computation cryptographic engine."
 
 [package.metadata.cargo-machete]
 # Packages used by protoc files generation.

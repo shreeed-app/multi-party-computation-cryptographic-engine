@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use tonic::Status;
 
 use crate::{
-    proto::signer::v1::{
+    proto::engine::v1::{
         FinalizeSessionResponse,
         RoundMessage,
         StartAuxiliaryGenerationSessionRequest,

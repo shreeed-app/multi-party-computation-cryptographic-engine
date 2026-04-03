@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-package signer.v1;
+package engine.v1;
 
-option go_package = "signer_pb";
-option java_package = "com.signer.v1";
+option go_package = "engine_pb";
+option java_package = "com.engine.v1";
 
 /// Node engine IPC service.
 /// Executed by each participant in the protocol.

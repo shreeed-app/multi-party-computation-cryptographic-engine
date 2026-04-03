@@ -12,7 +12,7 @@ use tokio::task::yield_now;
 use tonic::Status;
 
 use crate::{
-    proto::signer::v1::{
+    proto::engine::v1::{
         CollectRoundResponse,
         FinalizeSessionResponse,
         RoundMessage,

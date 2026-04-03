@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
 
 use crate::{
-    proto::signer::v1::{
+    proto::engine::v1::{
         EcdsaSignature,
         RoundMessage,
         signature_result::FinalSignature,

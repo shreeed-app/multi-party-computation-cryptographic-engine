@@ -14,7 +14,7 @@ use tracing::instrument;
 use crate::{
     auth::bearer_client::ClientAuthInterceptor,
     config::controller::NodeConfig,
-    proto::signer::v1::{
+    proto::engine::v1::{
         AbortSessionRequest,
         AbortSessionResponse,
         CollectRoundRequest,

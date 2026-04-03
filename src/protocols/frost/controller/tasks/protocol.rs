@@ -25,7 +25,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use postcard::{Error as PostcardError, from_bytes, to_allocvec};
 
 use crate::{
-    proto::signer::v1::{
+    proto::engine::v1::{
         RoundMessage,
         StartSessionResponse,
         StartSigningSessionRequest,

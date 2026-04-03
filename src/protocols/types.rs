@@ -1,7 +1,7 @@
 //! Protocol types used across different protocol implementations.
 
 use crate::{
-    proto::signer::v1::signature_result::FinalSignature,
+    proto::engine::v1::signature_result::FinalSignature,
     protocols::algorithm::Algorithm,
     secrets::types::KeyShare,
     transport::grpc::node_client::NodeIpcClient,

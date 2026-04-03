@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use futures::stream::{FuturesUnordered, StreamExt};
 
 use crate::{
-    proto::signer::v1::{
+    proto::engine::v1::{
         FinalizeSessionResponse,
         RoundMessage,
         StartKeyGenerationSessionRequest,

@@ -5,6 +5,7 @@ use tonic::Status;
 
 use crate::{
     proto::engine::v1::{
+        Algorithm,
         FinalizeSessionResponse,
         RoundMessage,
         StartSessionResponse,
@@ -13,7 +14,6 @@ use crate::{
         signature_result::FinalSignature,
     },
     protocols::{
-        algorithm::Algorithm,
         cggmp24::controller::protocol::{
             Cggmp24ControllerProtocol,
             CggmpControllerProtocol,
@@ -71,7 +71,7 @@ impl CggmpControllerProtocol for SigningControllerDescriptor {
                 // Scope the key identifier per participant to locate the
                 // correct key share in Vault.
                 key_identifier: scoped(&data.key_identifier, index as u32),
-                algorithm: data.algorithm.as_str().to_string(),
+                algorithm: data.algorithm.into(),
                 threshold: data.threshold,
                 participants: data.participants,
                 message: data.message.clone(),

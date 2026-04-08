@@ -5,6 +5,7 @@ use tonic::Status;
 
 use crate::{
     proto::engine::v1::{
+        Algorithm,
         FinalizeSessionResponse,
         KeyGenerationResult,
         RoundMessage,
@@ -13,7 +14,6 @@ use crate::{
         finalize_session_response::FinalOutput,
     },
     protocols::{
-        algorithm::Algorithm,
         cggmp24::controller::protocol::{
             Cggmp24ControllerProtocol,
             CggmpControllerProtocol,
@@ -66,7 +66,7 @@ impl CggmpControllerProtocol for KeyGenerationControllerDescriptor {
         let response: StartSessionResponse = node
             .start_key_generation(StartKeyGenerationSessionRequest {
                 key_identifier: data.key_identifier.clone(),
-                algorithm: data.algorithm.as_str().to_string(),
+                algorithm: data.algorithm.into(),
                 threshold: data.threshold,
                 participants: data.participants,
                 identifier: index as u32,

@@ -7,6 +7,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 
 use crate::{
     proto::engine::v1::{
+        Algorithm,
         FinalizeSessionResponse,
         RoundMessage,
         StartKeyGenerationSessionRequest,
@@ -16,7 +17,6 @@ use crate::{
         finalize_session_response::FinalOutput,
     },
     protocols::{
-        algorithm::Algorithm,
         codec::{decode_wire, encode_wire},
         frost::wire::FrostWire,
         protocol::Protocol,
@@ -266,7 +266,7 @@ impl FrostControllerKeyGeneration {
                             &self.key_identifier,
                             identifier,
                         ),
-                        algorithm: self.algorithm.as_str().to_string(),
+                        algorithm: self.algorithm.into(),
                         threshold: self.threshold,
                         participants: self.participants,
                         identifier,

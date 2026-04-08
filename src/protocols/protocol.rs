@@ -6,11 +6,8 @@ use async_trait::async_trait;
 use tokio::sync::Notify;
 
 use crate::{
-    proto::engine::v1::RoundMessage,
-    protocols::{
-        algorithm::Algorithm,
-        types::{ProtocolOutput, Round},
-    },
+    proto::engine::v1::{Algorithm, RoundMessage},
+    protocols::types::{ProtocolOutput, Round},
     transport::errors::Errors,
 };
 

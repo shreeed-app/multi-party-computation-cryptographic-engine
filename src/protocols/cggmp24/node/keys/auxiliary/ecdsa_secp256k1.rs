@@ -31,9 +31,8 @@ use serde_json::{Error, from_slice, to_vec};
 use tokio::sync::Notify;
 
 use crate::{
-    proto::engine::v1::RoundMessage,
+    proto::engine::v1::{Algorithm, RoundMessage},
     protocols::{
-        algorithm::Algorithm,
         cggmp24::{
             node::{
                 keys::auxiliary::worker::{

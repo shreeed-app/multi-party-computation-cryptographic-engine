@@ -6,10 +6,10 @@ This document outlines the setup and prerequisites for the multi-party computati
 
 | OS                 | Status |
 | ------------------ | ------ |
-| macOS              | ✅     |
-| Linux              | ✅     |
-| Windows (via WSL2) | ✅     |
-| Native Windows     | ✅     |
+| macOS              | ✅      |
+| Linux              | ✅      |
+| Windows (via WSL2) | ✅      |
+| Native Windows     | ✅      |
 
 ## Prerequisites
 
@@ -17,9 +17,9 @@ This document outlines the setup and prerequisites for the multi-party computati
 - [Act](https://github.com/nektos/act) for local GitHub Actions testing
 - [Rust](https://www.rust-lang.org) and Cargo
 
-## Key Generation Protocols
+## Protocols
 
-## FROST Key Generation Protocol
+### FROST Key Generation Protocol
 
 The following sequence diagram illustrates the interactions between the controller and multiple nodes during a FROST distributed key generation session.
 
@@ -44,7 +44,7 @@ sequenceDiagram
 
     Note over Controller,Node: Round 1: Broadcast all <br /> Round1Packages to each node
 
-    Note over Controller: Aggregates all Round1Packages <br /> into a single distributed key generationRound1Packages batch
+    Note over Controller: Aggregates all Round1Packages <br /> into a single distributed key generation Round1Packages batch
     Controller->>Node: SubmitRound
     Note over Node: Runs distributed key generation part2(), <br /> generates Round2SecretPackage and <br /> Round2Packages for each recipient node
     Node-->>Controller: SubmitRoundResponse
@@ -64,7 +64,7 @@ sequenceDiagram
     Note over Controller: Verifies all nodes returned identical <br /> public_key and public_key_package, <br /> and publishes public key
 ```
 
-## FROST Signing Protocol
+### FROST Signing Protocol
 
 The following sequence diagram illustrates the interactions between the controller and multiple nodes during a FROST threshold signing session.
 
@@ -103,7 +103,7 @@ sequenceDiagram
     Controller-->>Controller: FinalSignature
 ```
 
-## CGGMP24 Key Generation Protocol
+### CGGMP24 Key Generation Protocol
 
 The following sequence diagram illustrates the interactions between the controller and multiple nodes during a CGGMP24 key generation session, comprising two phases: distributed key generation and auxiliary information generation.
 
@@ -161,7 +161,7 @@ sequenceDiagram
     Node-->>Controller: FinalizeSessionResponse
 ```
 
-## CGGMP24 Signing Protocol
+### CGGMP24 Signing Protocol
 
 The following sequence diagram illustrates the interactions between the controller and multiple nodes during a CGGMP24 threshold signing session.
 

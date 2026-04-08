@@ -22,9 +22,8 @@ use serde_json::{Error, to_vec};
 use tokio::sync::Notify;
 
 use crate::{
-    proto::engine::v1::RoundMessage,
+    proto::engine::v1::{Algorithm, RoundMessage},
     protocols::{
-        algorithm::Algorithm,
         cggmp24::{
             node::worker::{CggmpProtocol, Worker, WorkerDone, spawn_worker},
             wire::Cggmp24Wire,

@@ -47,6 +47,16 @@ service Node {
   returns (AbortSessionResponse);
 }
 
+/// Supported algorithms.
+enum Algorithm {
+  /// FROST over ed25519.
+  FROST_ED25519 = 0;
+  /// FROST over Schnorr with secp256k1.
+  FROST_SCHNORR_SECP256K1 = 1;
+  /// CGGMP24 over ECDSA with secp256k1.
+  CGGMP24_ECDSA_SECP256K1 = 2;
+}
+
 /// Controller service for high-level operations.
 /// Entry point for external clients — orchestrates the full protocol across
 /// all nodes and returns the final result.
@@ -68,8 +78,8 @@ service Controller {
 message GenerateKeyRequest {
   /// Stable identifier for the key — used to retrieve the key share later.
   string key_identifier = 1;
-  /// Algorithm identifier (e.g. "cggmp24-ecdsa-secp256k1", "frost-ed25519").
-  string algorithm = 2;
+  /// Algorithm to use for distributed key generation.
+  Algorithm algorithm = 2;
   /// Minimum number of participants required to sign (t).
   uint32 threshold = 3;
   /// Total number of participants holding a key share (n).
@@ -88,8 +98,8 @@ message SignRequest {
   string key_identifier = 1;
   /// Serialized public key package required for threshold aggregation.
   bytes public_key_package = 2;
-  /// Algorithm identifier (e.g. "cggmp24-ecdsa-secp256k1", "frost-ed25519").
-  string algorithm = 3;
+  /// Algorithm identifier — must match the value used during GenerateKey.
+  Algorithm algorithm = 3;
   /// Minimum number of participants required to sign (t).
   uint32 threshold = 4;
   /// Total number of participants holding a key share (n).
@@ -118,7 +128,7 @@ message StartSigningSessionRequest {
   /// Stable identifier for the key to sign with.
   string key_identifier = 1;
   /// Algorithm identifier.
-  string algorithm = 2;
+  Algorithm algorithm = 2;
   /// Minimum number of participants required to sign (t).
   uint32 threshold = 3;
   /// Total number of participants holding a key share (n).
@@ -132,7 +142,7 @@ message StartKeyGenerationSessionRequest {
   /// Stable identifier for the key being generated.
   string key_identifier = 1;
   /// Algorithm identifier.
-  string algorithm = 2;
+  Algorithm algorithm = 2;
   /// Minimum number of participants required to sign (t).
   uint32 threshold = 3;
   /// Total number of participants holding a key share (n).
@@ -147,7 +157,7 @@ message StartAuxiliaryGenerationSessionRequest {
   /// Stable identifier for the auxiliary data being generated.
   string key_identifier = 1;
   /// Algorithm identifier.
-  string algorithm = 2;
+  Algorithm algorithm = 2;
   /// Minimum number of participants required to sign (t).
   uint32 participants = 3;
   /// Index of this participant in the protocol (0-based for CGGMP24,

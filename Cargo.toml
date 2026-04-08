@@ -7,7 +7,7 @@ description = "Production-grade multi-party computation cryptographic engine."
 
 [package.metadata.cargo-machete]
 # Packages used by protoc files generation.
-ignored = ["prost", "tonic-prost", "strum"]
+ignored = ["prost", "tonic-prost"]
 
 [workspace.metadata.dylint]
 libraries = [
@@ -68,8 +68,8 @@ strum = "0.28.0"
 strum_macros = "0.28.0"
 subtle = "2.6.1"
 thiserror = "2.0.18"
-tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros"] }
-toml = "1.1.0"
+tokio = { version = "1.51.0", features = ["rt-multi-thread", "macros"] }
+toml = "1.1.2"
 tonic = "0.14.5"
 tonic-middleware = "0.4.1"
 tonic-prost = "0.14.5"

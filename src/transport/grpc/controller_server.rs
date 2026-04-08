@@ -1,28 +1,14 @@
 //! gRPC IPC server for the controller engine.
 
-use std::str::FromStr;
-
-use strum::ParseError;
 use tonic::{Request, Response, Status};
 use tracing::instrument;
 
 use crate::{
     auth::session::identifier::SessionIdentifier,
     proto::engine::v1::{
-        AbortRequest,
-        AbortResponse,
-        GenerateKeyRequest,
-        GenerateKeyResponse,
-        KeyGenerationResult,
-        RoundMessage,
-        SignRequest,
-        SignResponse,
-        SignatureResult,
-        controller_server::Controller,
+        AbortRequest, AbortResponse, Algorithm, GenerateKeyRequest, GenerateKeyResponse, KeyGenerationResult, RoundMessage, SignRequest, SignResponse, SignatureResult, controller_server::Controller
     },
-    protocols::{
-        algorithm::Algorithm,
-        types::{
+    protocols::types::{
             AuxiliaryGenerationInit,
             ControllerAuxiliaryGenerationInit,
             ControllerKeyGenerationInit,
@@ -35,7 +21,6 @@ use crate::{
             ProtocolOutput,
             SigningInit,
         },
-    },
     service::api::EngineApi,
     transport::{errors::Errors, grpc::node_client::NodeIpcClient},
 };
@@ -89,14 +74,12 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
         let request: GenerateKeyRequest = request.into_inner();
 
         let algorithm: Algorithm =
-            match Algorithm::from_str(&request.algorithm) {
+            match Algorithm::try_from(request.algorithm) {
                 Ok(algorithm) => algorithm,
                 Err(error) => {
-                    return Err(Errors::UnsupportedAlgorithm(format!(
-                        "Failed to parse algorithm: {}",
-                        error
-                    ))
-                    .into());
+                    return Err(
+                        Errors::UnsupportedAlgorithm(error.to_string()).into()
+                    );
                 },
             };
 
@@ -191,13 +174,8 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
             SigningInit::Controller(ControllerSigningInit {
                 common: DefaultSigningInit {
                     key_identifier: request.key_identifier.clone(),
-                    algorithm: Algorithm::from_str(&request.algorithm)
-                        .map_err(|error: ParseError| {
-                            Errors::UnsupportedAlgorithm(format!(
-                                "Failed to parse algorithm: {}",
-                                error
-                            ))
-                        })?,
+                    algorithm: Algorithm::try_from(request.algorithm)
+                        .map_err(|e| Errors::UnsupportedAlgorithm(e.to_string()))?,
                     threshold: request.threshold,
                     participants: request.participants,
                     message: request.message.clone(),

@@ -26,7 +26,13 @@ use postcard::{Error as PostcardError, from_bytes, to_allocvec};
 
 use crate::{
     proto::engine::v1::{
-        Algorithm, RoundMessage, StartSessionResponse, StartSigningSessionRequest, SubmitRoundRequest, SubmitRoundResponse, signature_result::FinalSignature
+        Algorithm,
+        RoundMessage,
+        StartSessionResponse,
+        StartSigningSessionRequest,
+        SubmitRoundRequest,
+        SubmitRoundResponse,
+        signature_result::FinalSignature,
     },
     protocols::{
         codec::{decode_wire, encode_wire},

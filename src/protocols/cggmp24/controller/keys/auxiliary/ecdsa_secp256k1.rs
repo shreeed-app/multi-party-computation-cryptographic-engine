@@ -10,7 +10,12 @@ use tonic::Status;
 
 use crate::{
     proto::engine::v1::{
-        Algorithm, FinalizeSessionResponse, RoundMessage, StartAuxiliaryGenerationSessionRequest, StartSessionResponse, finalize_session_response::FinalOutput
+        Algorithm,
+        FinalizeSessionResponse,
+        RoundMessage,
+        StartAuxiliaryGenerationSessionRequest,
+        StartSessionResponse,
+        finalize_session_response::FinalOutput,
     },
     protocols::{
         cggmp24::controller::protocol::{

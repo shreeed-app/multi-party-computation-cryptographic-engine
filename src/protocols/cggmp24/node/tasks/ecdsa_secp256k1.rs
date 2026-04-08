@@ -21,7 +21,10 @@ use tokio::sync::Notify;
 
 use crate::{
     proto::engine::v1::{
-        Algorithm, EcdsaSignature, RoundMessage, signature_result::FinalSignature
+        Algorithm,
+        EcdsaSignature,
+        RoundMessage,
+        signature_result::FinalSignature,
     },
     protocols::{
         cggmp24::{

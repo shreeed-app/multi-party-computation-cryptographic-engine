@@ -6,7 +6,25 @@ use tracing::{field::Empty, instrument};
 use crate::{
     auth::session::identifier::SessionIdentifier,
     proto::engine::v1::{
-        AbortSessionRequest, AbortSessionResponse, Algorithm, AuxiliaryGenerationResult, CollectRoundRequest, CollectRoundResponse, FinalizeSessionRequest, FinalizeSessionResponse, KeyGenerationResult, RoundMessage, SignatureResult, StartAuxiliaryGenerationSessionRequest, StartKeyGenerationSessionRequest, StartSessionResponse, StartSigningSessionRequest, SubmitRoundRequest, SubmitRoundResponse, finalize_session_response::FinalOutput, node_server::Node
+        AbortSessionRequest,
+        AbortSessionResponse,
+        Algorithm,
+        AuxiliaryGenerationResult,
+        CollectRoundRequest,
+        CollectRoundResponse,
+        FinalizeSessionRequest,
+        FinalizeSessionResponse,
+        KeyGenerationResult,
+        RoundMessage,
+        SignatureResult,
+        StartAuxiliaryGenerationSessionRequest,
+        StartKeyGenerationSessionRequest,
+        StartSessionResponse,
+        StartSigningSessionRequest,
+        SubmitRoundRequest,
+        SubmitRoundResponse,
+        finalize_session_response::FinalOutput,
+        node_server::Node,
     },
     protocols::{
         cggmp24::node::tasks::ecdsa_secp256k1::compute_parties,
@@ -90,15 +108,15 @@ impl<
 
         let request: &StartSigningSessionRequest = request.get_ref();
 
-        let algorithm: Algorithm =
-            match Algorithm::try_from(request.algorithm) {
-                Ok(algorithm) => algorithm,
-                Err(error) => {
-                    return Err(
-                        Errors::UnsupportedAlgorithm(error.to_string()).into()
-                    );
-                },
-            };
+        let algorithm: Algorithm = match Algorithm::try_from(request.algorithm)
+        {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(
+                    Errors::UnsupportedAlgorithm(error.to_string()).into()
+                );
+            },
+        };
 
         // Extract the base key identifier by removing the per-participant
         // suffix appended by the controller (e.g. "my-key/0" → "my-key").

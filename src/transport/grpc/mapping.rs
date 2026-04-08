@@ -67,4 +67,3 @@ impl From<Error> for Errors {
         Errors::Internal(error.to_string())
     }
 }
-

@@ -1,8 +1,8 @@
 //! Protocol factory definitions.
 
 use crate::{
+    proto::engine::v1::Algorithm,
     protocols::{
-        algorithm::Algorithm,
         cggmp24::{
             controller::{
                 keys::{
@@ -136,7 +136,7 @@ impl ProtocolFactory {
                             format!(
                                 "Auxiliary generation is not supported \
                                 for this algorithm: {}", 
-                                algorithm.as_str()
+                                algorithm.as_str_name()
                             ),
                         )),
                     }
@@ -155,7 +155,7 @@ impl ProtocolFactory {
                             format!(
                                 "Auxiliary generation is not supported \
                                 for this algorithm: {}", 
-                                algorithm.as_str()
+                                algorithm.as_str_name()
                             ),
                         )),
                     }

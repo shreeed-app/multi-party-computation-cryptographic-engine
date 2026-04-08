@@ -9,6 +9,7 @@ use app::{
     auth::bearer_client::ClientAuthInterceptor,
     config::ipc::AuthConfig,
     proto::engine::v1::{
+        Algorithm,
         GenerateKeyRequest,
         GenerateKeyResponse,
         KeyGenerationResult,
@@ -17,7 +18,6 @@ use app::{
         controller_client::ControllerClient,
         signature_result::FinalSignature,
     },
-    protocols::algorithm::Algorithm,
 };
 use helpers::cluster::start_cluster_once;
 use rand::random;
@@ -64,14 +64,14 @@ async fn run_signing_test(algorithm: Algorithm) {
     // Generate a key to sign with. The key identifier is scoped to the
     // algorithm to avoid conflicts across test runs.
     let key_identifier: String =
-        format!("{}-{}", algorithm.as_str(), random::<u64>());
+        format!("{}-{}", algorithm.as_str_name(), random::<u64>());
 
     let key_generation_response: GenerateKeyResponse = client
         .generate_key(GenerateKeyRequest {
             key_identifier: key_identifier.clone(),
             threshold: cluster_config.threshold(),
             participants: cluster_config.participants(),
-            algorithm: algorithm.as_str().into(),
+            algorithm: i32::from(algorithm),
         })
         .await
         .expect("Key generation failed.")
@@ -82,7 +82,7 @@ async fn run_signing_test(algorithm: Algorithm) {
         .expect("Key generation result missing.");
 
     let message: Vec<u8> =
-        format!("{}-{}", algorithm.as_str(), random::<u64>())
+        format!("{}-{}", algorithm.as_str_name(), random::<u64>())
             .as_bytes()
             .to_vec();
 
@@ -90,7 +90,7 @@ async fn run_signing_test(algorithm: Algorithm) {
         .sign(SignRequest {
             key_identifier,
             public_key_package: key.public_key_package,
-            algorithm: algorithm.as_str().into(),
+            algorithm: i32::from(algorithm),
             threshold: cluster_config.threshold(),
             participants: cluster_config.participants(),
             message,

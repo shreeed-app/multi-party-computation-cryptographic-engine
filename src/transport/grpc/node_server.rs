@@ -1,8 +1,5 @@
 //! IPC server for the signing engine.
 
-use std::str::FromStr;
-
-use strum::ParseError;
 use tonic::{Request, Response, Status};
 use tracing::{field::Empty, instrument};
 
@@ -11,6 +8,7 @@ use crate::{
     proto::engine::v1::{
         AbortSessionRequest,
         AbortSessionResponse,
+        Algorithm,
         AuxiliaryGenerationResult,
         CollectRoundRequest,
         CollectRoundResponse,
@@ -29,7 +27,6 @@ use crate::{
         node_server::Node,
     },
     protocols::{
-        algorithm::Algorithm,
         cggmp24::node::tasks::ecdsa_secp256k1::compute_parties,
         types::{
             AuxiliaryGenerationInit,
@@ -111,17 +108,15 @@ impl<
 
         let request: &StartSigningSessionRequest = request.get_ref();
 
-        let algorithm: Algorithm =
-            match Algorithm::from_str(&request.algorithm) {
-                Ok(algorithm) => algorithm,
-                Err(error) => {
-                    return Err(Errors::UnsupportedAlgorithm(format!(
-                        "Failed to parse algorithm: {}",
-                        error
-                    ))
-                    .into());
-                },
-            };
+        let algorithm: Algorithm = match Algorithm::try_from(request.algorithm)
+        {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(
+                    Errors::UnsupportedAlgorithm(error.to_string()).into()
+                );
+            },
+        };
 
         // Extract the base key identifier by removing the per-participant
         // suffix appended by the controller (e.g. "my-key/0" → "my-key").
@@ -200,13 +195,8 @@ impl<
 
         let request: &StartKeyGenerationSessionRequest = request.get_ref();
 
-        let algorithm: Algorithm = Algorithm::from_str(&request.algorithm)
-            .map_err(|error: ParseError| {
-                Errors::UnsupportedAlgorithm(format!(
-                    "Failed to parse algorithm: {}",
-                    error
-                ))
-            })?;
+        let algorithm: Algorithm = Algorithm::try_from(request.algorithm)
+            .map_err(|e| Errors::UnsupportedAlgorithm(e.to_string()))?;
 
         let init: ProtocolInit = ProtocolInit::KeyGeneration(
             KeyGenerationInit::Node(NodeKeyGenerationInit {
@@ -260,10 +250,8 @@ impl<
         let request: &StartAuxiliaryGenerationSessionRequest =
             request.get_ref();
 
-        let algorithm: Algorithm = Algorithm::from_str(&request.algorithm)
-            .map_err(|error: ParseError| {
-                Errors::UnsupportedAlgorithm(error.to_string())
-            })?;
+        let algorithm: Algorithm = Algorithm::try_from(request.algorithm)
+            .map_err(|e| Errors::UnsupportedAlgorithm(e.to_string()))?;
 
         // Retrieve the incomplete key share from vault using the key
         // identifier and the auxiliary identifier.

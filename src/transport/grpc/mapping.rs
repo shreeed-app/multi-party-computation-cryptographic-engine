@@ -1,6 +1,5 @@
 //! gRPC error conversions.
 
-use strum::ParseError;
 use tonic::{Code, Status, transport::Error};
 
 use crate::transport::errors::Errors;
@@ -66,18 +65,5 @@ impl From<Error> for Errors {
     /// * `Error` - The corresponding `Error::Internal`.
     fn from(error: Error) -> Self {
         Errors::Internal(error.to_string())
-    }
-}
-
-impl From<ParseError> for Errors {
-    /// Map a `strum::ParseError` into an `Error::InvalidArgument`.
-    ///
-    /// # Arguments
-    /// * `error` (`ParseError`) - The parse error to convert.
-    ///
-    /// # Returns
-    /// * `Error` - The corresponding `Error::InvalidArgument`.
-    fn from(error: ParseError) -> Self {
-        Errors::InvalidArgument(error.to_string())
     }
 }

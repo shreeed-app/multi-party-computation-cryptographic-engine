@@ -1,8 +1,6 @@
 //! gRPC IPC server for the controller engine.
 
-use std::str::FromStr;
-
-use strum::ParseError;
+use prost::UnknownEnumValue;
 use tonic::{Request, Response, Status};
 use tracing::instrument;
 
@@ -11,6 +9,7 @@ use crate::{
     proto::engine::v1::{
         AbortRequest,
         AbortResponse,
+        Algorithm,
         GenerateKeyRequest,
         GenerateKeyResponse,
         KeyGenerationResult,
@@ -20,21 +19,18 @@ use crate::{
         SignatureResult,
         controller_server::Controller,
     },
-    protocols::{
-        algorithm::Algorithm,
-        types::{
-            AuxiliaryGenerationInit,
-            ControllerAuxiliaryGenerationInit,
-            ControllerKeyGenerationInit,
-            ControllerSigningInit,
-            DefaultAuxiliaryGenerationInit,
-            DefaultKeyGenerationInit,
-            DefaultSigningInit,
-            KeyGenerationInit,
-            ProtocolInit,
-            ProtocolOutput,
-            SigningInit,
-        },
+    protocols::types::{
+        AuxiliaryGenerationInit,
+        ControllerAuxiliaryGenerationInit,
+        ControllerKeyGenerationInit,
+        ControllerSigningInit,
+        DefaultAuxiliaryGenerationInit,
+        DefaultKeyGenerationInit,
+        DefaultSigningInit,
+        KeyGenerationInit,
+        ProtocolInit,
+        ProtocolOutput,
+        SigningInit,
     },
     service::api::EngineApi,
     transport::{errors::Errors, grpc::node_client::NodeIpcClient},
@@ -88,17 +84,15 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
     ) -> Result<Response<GenerateKeyResponse>, Status> {
         let request: GenerateKeyRequest = request.into_inner();
 
-        let algorithm: Algorithm =
-            match Algorithm::from_str(&request.algorithm) {
-                Ok(algorithm) => algorithm,
-                Err(error) => {
-                    return Err(Errors::UnsupportedAlgorithm(format!(
-                        "Failed to parse algorithm: {}",
-                        error
-                    ))
-                    .into());
-                },
-            };
+        let algorithm: Algorithm = match Algorithm::try_from(request.algorithm)
+        {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(
+                    Errors::UnsupportedAlgorithm(error.to_string()).into()
+                );
+            },
+        };
 
         // First phase: key generation, the controller orchestrates the key
         // generation protocol, and nodes store their incomplete key shares
@@ -191,12 +185,9 @@ impl<E: EngineApi> Controller for ControllerIpcServer<E> {
             SigningInit::Controller(ControllerSigningInit {
                 common: DefaultSigningInit {
                     key_identifier: request.key_identifier.clone(),
-                    algorithm: Algorithm::from_str(&request.algorithm)
-                        .map_err(|error: ParseError| {
-                            Errors::UnsupportedAlgorithm(format!(
-                                "Failed to parse algorithm: {}",
-                                error
-                            ))
+                    algorithm: Algorithm::try_from(request.algorithm)
+                        .map_err(|error: UnknownEnumValue| {
+                            Errors::UnsupportedAlgorithm(error.to_string())
                         })?,
                     threshold: request.threshold,
                     participants: request.participants,

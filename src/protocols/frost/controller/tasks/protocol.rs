@@ -26,6 +26,7 @@ use postcard::{Error as PostcardError, from_bytes, to_allocvec};
 
 use crate::{
     proto::engine::v1::{
+        Algorithm,
         RoundMessage,
         StartSessionResponse,
         StartSigningSessionRequest,
@@ -34,7 +35,6 @@ use crate::{
         signature_result::FinalSignature,
     },
     protocols::{
-        algorithm::Algorithm,
         codec::{decode_wire, encode_wire},
         frost::wire::FrostWire,
         protocol::Protocol,
@@ -553,7 +553,7 @@ where
                             &self.key_identifier,
                             identifier,
                         ),
-                        algorithm: self.algorithm.as_str().to_string(),
+                        algorithm: self.algorithm.into(),
                         threshold: self.threshold,
                         participants: self.participants,
                         message: self.message.clone(),

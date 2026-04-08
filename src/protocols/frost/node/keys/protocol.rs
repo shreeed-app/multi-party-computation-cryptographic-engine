@@ -35,9 +35,8 @@ use rkyv::{rancor::Error as RkyvError, to_bytes, util::AlignedVec};
 use zeroize::Zeroize;
 
 use crate::{
-    proto::engine::v1::RoundMessage,
+    proto::engine::v1::{Algorithm, RoundMessage},
     protocols::{
-        algorithm::Algorithm,
         codec::{decode_wire, encode_wire},
         frost::{stored_key::FrostStoredKey, wire::FrostWire},
         protocol::Protocol,

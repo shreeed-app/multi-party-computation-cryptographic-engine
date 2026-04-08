@@ -6,12 +6,12 @@ use app::{
     auth::bearer_client::ClientAuthInterceptor,
     config::ipc::AuthConfig,
     proto::engine::v1::{
+        Algorithm,
         GenerateKeyRequest,
         GenerateKeyResponse,
         KeyGenerationResult,
         controller_client::ControllerClient,
     },
-    protocols::algorithm::Algorithm,
 };
 use helpers::cluster::start_cluster_once;
 use rand::random;
@@ -63,12 +63,12 @@ async fn run_key_generation_test(algorithm: Algorithm) {
         .generate_key(GenerateKeyRequest {
             key_identifier: format!(
                 "{}-{}",
-                algorithm.as_str(),
+                algorithm.as_str_name(),
                 random::<u64>()
             ),
             threshold: cluster_config.threshold(),
             participants: cluster_config.participants(),
-            algorithm: algorithm.as_str().into(),
+            algorithm: i32::from(algorithm),
         })
         .await
         .expect("Key generation failed.")

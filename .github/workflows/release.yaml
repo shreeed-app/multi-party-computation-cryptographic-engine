@@ -6,6 +6,8 @@ on:
       - "Continuous integration"
     types:
       - completed
+    branches:
+      - master
 
 concurrency:
   group: release-${{ github.ref }}
@@ -101,6 +103,7 @@ jobs:
         with:
           context: .
           push: true
+          provenance: false
           platforms: linux/amd64,linux/arm64
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.sha }}

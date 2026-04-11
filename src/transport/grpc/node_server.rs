@@ -27,7 +27,7 @@ use crate::{
         node_server::Node,
     },
     protocols::{
-        cggmp24::node::tasks::ecdsa_secp256k1::compute_parties,
+        cggmp24::signer_set::compute_parties,
         types::{
             AuxiliaryGenerationInit,
             DefaultAuxiliaryGenerationInit,

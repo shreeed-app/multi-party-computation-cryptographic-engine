@@ -102,6 +102,13 @@ pub struct Cggmp24NodeProtocol<P: CggmpNodeProtocol> {
     pub data: P::Data,
     /// This participant's identifier as u32.
     pub identifier_u32: u32,
+    /// Ordered list of party identifiers participating in this protocol
+    /// instance. Used to remap between protocol-level party indices (used
+    /// by the CGGMP24 library) and transport-level participant IDs (used
+    /// by the controller). For key generation and auxiliary generation,
+    /// this is `[0, 1, ..., n-1]`. For threshold signing, this is the
+    /// subset selected by `compute_parties`.
+    parties: Vec<u16>,
     /// Channel for delivering incoming protocol messages to the worker.
     /// Wrapped in `Option` so it can be dropped on abort — dropping the
     /// sender causes the worker's receiver to return an error, prompting
@@ -136,10 +143,12 @@ where
     /// # Arguments
     /// * `data` (`P::Data`) - Protocol-specific data.
     /// * `identifier_u32` (`u32`) - This participant's identifier.
+    /// * `parties` (`Vec<u16>`) - Ordered party identifiers for remapping.
     /// * `worker_protocol` (`W`) - The worker protocol descriptor to spawn.
     pub fn new<W>(
         data: P::Data,
         identifier_u32: u32,
+        parties: Vec<u16>,
         worker_protocol: W,
     ) -> Self
     where
@@ -185,6 +194,7 @@ where
         Self {
             data,
             identifier_u32,
+            parties,
             incoming_transmitter: Some(incoming_transmitter),
             outgoing_receiver,
             done_receiver,
@@ -263,9 +273,18 @@ where
         })?;
 
         // Resolve the recipient — P2P messages carry a specific target,
-        // broadcast messages are sent to all parties.
+        // broadcast messages are sent to all parties. Remap the
+        // protocol-level party index to the original participant ID used
+        // by the controller for message routing.
         let to: Option<u32> = match outgoing.recipient {
-            MessageDestination::OneParty(party) => Some(u32::from(party)),
+            MessageDestination::OneParty(party) => Some(
+                self.parties.get(party as usize).copied().ok_or_else(|| {
+                    Errors::InvalidMessage(format!(
+                        "Party index {} out of range (parties: {:?})",
+                        party, self.parties
+                    ))
+                })? as u32,
+            ),
             MessageDestination::AllParties => None,
         };
 
@@ -308,8 +327,9 @@ where
             })?;
 
         // Resolve the sender identifier and message type for the state
-        // machine.
-        let sender: u16 = round_message
+        // machine. Remap the transport-level participant ID to the
+        // protocol-level party index expected by the CGGMP24 library.
+        let sender_raw: u16 = round_message
             .from
             .ok_or(Errors::InvalidMessage("Missing sender.".into()))?
             .try_into()
@@ -319,6 +339,24 @@ where
                     error
                 ))
             })?;
+
+        let sender: u16 = u16::try_from(
+            self.parties
+                .iter()
+                .position(|&party: &u16| party == sender_raw)
+                .ok_or_else(|| {
+                Errors::InvalidMessage(format!(
+                    "Sender {} not found in parties {:?}.",
+                    sender_raw, self.parties
+                ))
+            })?,
+        )
+        .map_err(|error| {
+            Errors::InvalidMessage(format!(
+                "Sender position exceeds u16 range: {}",
+                error
+            ))
+        })?;
 
         // Deliver the message to the worker — P2P if a recipient is set,
         // broadcast otherwise. Returns Aborted if the channel was dropped

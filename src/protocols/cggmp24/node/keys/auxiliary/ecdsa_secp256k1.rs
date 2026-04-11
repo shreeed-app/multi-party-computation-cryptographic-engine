@@ -243,6 +243,7 @@ impl Cggmp24EcdsaSecp256k1NodeAuxiliaryGeneration {
         Ok(Self(Cggmp24NodeProtocol::new(
             data,
             init.identifier,
+            (0..participants).collect(),
             // Spawn the worker thread — it will drive the CGGMP24 auxiliary
             // generation state machine to completion and signal via
             // done_transmitter when finished.

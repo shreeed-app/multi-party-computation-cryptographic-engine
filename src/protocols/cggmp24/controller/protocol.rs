@@ -43,6 +43,25 @@ pub trait CggmpControllerProtocol: Send + 'static {
     /// * `u32` - The number of participants.
     fn participants(data: &Self::Data) -> u32;
 
+    /// Indices of nodes that should participate in this protocol instance.
+    ///
+    /// For most protocols (key generation, auxiliary generation) all nodes
+    /// participate. For threshold signing only a subset is selected —
+    /// the default returns all indices, signing overrides with a
+    /// deterministic signer set.
+    ///
+    /// # Arguments
+    /// * `data` (`&Self::Data`) - Protocol-specific data.
+    ///
+    /// # Errors
+    /// * `Errors` - If the signer set cannot be computed.
+    ///
+    /// # Returns
+    /// * `Vec<usize>` - Participant indices that should be contacted.
+    fn signer_indices(data: &Self::Data) -> Result<Vec<usize>, Errors> {
+        Ok((0..Self::participants(data) as usize).collect())
+    }
+
     /// Start a session on a single node and return its initial messages.
     ///
     /// Called in parallel across all nodes during `start_sessions`. The
@@ -101,8 +120,9 @@ pub struct Cggmp24ControllerProtocol<C: CggmpControllerProtocol> {
     /// participant order.
     nodes: Vec<NodeIpcClient>,
     /// Active session identifiers returned by each node at session start,
-    /// indexed by participant order.
-    sessions: Vec<String>,
+    /// indexed by participant order. `None` for nodes not participating in
+    /// this protocol instance (e.g. non-signers in threshold signing).
+    sessions: Vec<Option<String>>,
     /// Final protocol output, populated by `run` and consumed by
     /// `take_output`.
     output: Option<ProtocolOutput>,
@@ -131,8 +151,12 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
         }
     }
 
-    /// Start sessions on all nodes in parallel and collect initial outgoing
-    /// messages from each.
+    /// Start sessions on the signer nodes in parallel and collect initial
+    /// outgoing messages from each.
+    ///
+    /// Only nodes returned by `C::signer_indices` are contacted — for key
+    /// generation and auxiliary generation this is all nodes; for threshold
+    /// signing only the deterministic signer subset.
     ///
     /// Responses are sorted by participant index before registering sessions
     /// to guarantee a consistent ordering in `self.sessions`.
@@ -152,8 +176,13 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
     async fn start_sessions(
         &mut self,
     ) -> Result<VecDeque<RoundMessage>, Errors> {
-        // Start all sessions in parallel — avoids sequential latency for
-        // n nodes.
+        let signer_indices: Vec<usize> = C::signer_indices(&self.data)?;
+
+        // Pre-initialize sessions — None for non-signers, Some after
+        // response.
+        self.sessions = vec![None; self.nodes.len()];
+
+        // Start only signer sessions in parallel.
         let futures: impl Iterator<
             Item = impl Future<
                 Output = (
@@ -161,8 +190,8 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
                     Result<(String, Vec<RoundMessage>, Vec<u32>), Status>,
                 ),
             >,
-        > = self.nodes.iter().enumerate().map(
-            |(index, node): (usize, &NodeIpcClient)| {
+        > = signer_indices.into_iter().filter_map(|index: usize| {
+            self.nodes.get(index).map(|node: &NodeIpcClient| {
                 let future: impl Future<
                     Output = Result<
                         (String, Vec<RoundMessage>, Vec<u32>),
@@ -170,8 +199,8 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
                     >,
                 > = C::start_session(&self.data, index, node);
                 async move { (index, future.await) }
-            },
-        );
+            })
+        });
 
         let mut responses: Vec<(
             usize,
@@ -204,9 +233,8 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
                         Vec<u32>,
                     ) = result.map_err(map_status)?;
 
-                    // Register the session identifier for this node — used by
-                    // submit_batch and collect_round to route messages.
-                    self.sessions.push(session_identifier);
+                    // Register the session identifier for this signer node.
+                    self.sessions[index] = Some(session_identifier);
 
                     // Tag each message with the sender's participant index —
                     // required for routing in build_submit_requests.
@@ -271,13 +299,20 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
                 message.from.map(|from: u32| (from, message))
             })
             .flat_map(|(from, message): (u32, &RoundMessage)| {
-                // Fan out broadcast messages to all participants except the
-                // sender, deliver P2P messages only to their designated
+                // Fan out broadcast messages to active participants except
+                // the sender, deliver P2P messages only to their designated
                 // target.
                 let targets: Vec<u32> = match message.to {
                     Some(identifier) => vec![identifier],
                     None => (0..participants)
                         .filter(|identifier: &u32| *identifier != from)
+                        .filter(|identifier: &u32| {
+                            self.sessions
+                                .get(*identifier as usize)
+                                .is_some_and(|option: &Option<String>| {
+                                    option.is_some()
+                                })
+                        })
                         .collect(),
                 };
                 targets
@@ -290,10 +325,11 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
                 let session_identifier: String = self
                     .sessions
                     .get(node_index)
+                    .and_then(|opt: &Option<String>| opt.as_ref())
                     .ok_or_else(|| {
                         Errors::InvalidMessage(format!(
-                            "No session found for target node {}: {:?}",
-                            node_identifier, self.sessions
+                            "No session found for target node {}",
+                            node_identifier
                         ))
                     })?
                     .clone();
@@ -368,22 +404,31 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
                         .iter()
                         .enumerate()
                         // Skip nodes that have already signaled completion.
-                        .filter(|(index, _): &(usize, &String)| {
+                        .filter(|(index, _): &(usize, &Option<String>)| {
                             !all_done.get(*index).copied().unwrap_or(true)
                         })
                         .filter_map(
-                            |(index, session_identifier): (usize, &String)| {
-                                self.nodes.get(index).map(
-                                    |node: &NodeIpcClient| {
-                                        let future: impl Future<
-                                            Output = Result<
-                                                CollectRoundResponse,
-                                                Status,
-                                            >,
-                                        > = node.collect_round(
-                                            session_identifier.clone(),
-                                        );
-                                        async move { (index, future.await) }
+                            |(index, session_opt): (
+                                usize,
+                                &Option<String>,
+                            )| {
+                                session_opt.as_ref().and_then(
+                                    |session_identifier: &String| {
+                                        self.nodes.get(index).map(
+                                            |node: &NodeIpcClient| {
+                                                let future: impl Future<
+                                                    Output = Result<
+                                                        CollectRoundResponse,
+                                                        Status,
+                                                    >,
+                                                > = node.collect_round(
+                                                    session_identifier.clone(),
+                                                );
+                                                async move {
+                                                    (index, future.await)
+                                                }
+                                            },
+                                        )
                                     },
                                 )
                             },
@@ -436,15 +481,17 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
         &self,
     ) -> Result<Vec<FinalizeSessionResponse>, Errors> {
         join_all(self.sessions.iter().enumerate().filter_map(
-            |(index, session_identifier): (usize, &String)| {
-                self.nodes.get(index).map(|node: &NodeIpcClient| {
-                    let session_identifier: String =
-                        session_identifier.clone();
-                    async move {
-                        node.finalize(session_identifier)
-                            .await
-                            .map_err(map_status)
-                    }
+            |(index, session_opt): (usize, &Option<String>)| {
+                session_opt.as_ref().and_then(|session_identifier: &String| {
+                    self.nodes.get(index).map(|node: &NodeIpcClient| {
+                        let session_identifier: String =
+                            session_identifier.clone();
+                        async move {
+                            node.finalize(session_identifier)
+                                .await
+                                .map_err(map_status)
+                        }
+                    })
                 })
             },
         ))
@@ -465,7 +512,14 @@ impl<C: CggmpControllerProtocol> Cggmp24ControllerProtocol<C> {
     ///   `collect_round`, or `C::finalize_output`.
     pub async fn run(&mut self) -> Result<(), Errors> {
         let mut queue: VecDeque<RoundMessage> = self.start_sessions().await?;
-        let mut all_done: Vec<bool> = vec![false; self.nodes.len()];
+
+        // Non-signer nodes (sessions == None) are already "done" since they
+        // don't participate.
+        let mut all_done: Vec<bool> = self
+            .sessions
+            .iter()
+            .map(|session_opt: &Option<String>| session_opt.is_none())
+            .collect();
 
         loop {
             // Submit all pending outgoing messages to their target nodes.

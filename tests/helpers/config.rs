@@ -108,7 +108,7 @@ impl ClusterConfig {
     /// * `u32` - The signing threshold for the cluster, which is equal to the
     ///   total number of nodes (i.e., all nodes must participate in signing).
     pub fn threshold(&self) -> u32 {
-        self.node_count as u32
+        self.node_count as u32 - 1
     }
 
     /// Total participant count — equal to `node_count`.

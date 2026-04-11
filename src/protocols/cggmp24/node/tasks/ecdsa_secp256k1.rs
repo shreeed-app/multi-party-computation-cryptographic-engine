@@ -1,6 +1,6 @@
 //! CGGMP24 ECDSA Secp256k1 signing protocol implementation.
 
-use std::{array::TryFromSliceError, num::TryFromIntError, sync::Arc};
+use std::{array::TryFromSliceError, sync::Arc};
 
 use async_trait::async_trait;
 use cggmp24::{
@@ -37,6 +37,7 @@ use crate::{
                 },
             },
             security_level::Cggmp24SecurityLevel,
+            signer_set::compute_parties,
             stored_key::{ArchivedCggmp24StoredKey, Cggmp24StoredKey},
         },
         protocol::Protocol,
@@ -349,6 +350,7 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
         Ok(Self(Cggmp24NodeProtocol::new(
             data,
             stored.identifier as u32,
+            parties.clone(),
             // Spawn the worker thread to run the CGGMP24 signing protocol.
             // The worker executes the protocol state machine and communicates
             // with this struct via the channels.
@@ -361,73 +363,6 @@ impl Cggmp24EcdsaSecp256k1NodeSigning {
             },
         )))
     }
-}
-
-/// Deterministically compute the set of signing participants from the key
-/// identifier, threshold, and participant count.
-///
-/// All nodes derive the same signer set independently from these public
-/// values — see the inline comments in
-/// `Cggmp24EcdsaSecp256k1NodeSigning::try_new` for the full rationale. This
-/// function is exposed publicly so the node server can include the computed
-/// set in its `StartSessionResponse`, allowing the controller to verify
-/// cross-node consistency before the protocol runs.
-///
-/// # Errors
-/// * `Errors::InvalidMessage` - If the hash cannot be computed or converted.
-///
-/// # Returns
-/// * `Vec<u16>` - Sorted list of participant indices in the signer set.
-pub fn compute_parties(
-    key_identifier: &str,
-    threshold: u32,
-    participants: u32,
-) -> Result<Vec<u16>, Errors> {
-    // Hash the key identifier to derive a deterministic starting index —
-    // all nodes compute the same hash for the same key identifier.
-    let digest: [u8; 32] = Sha256::digest(key_identifier.as_bytes()).into();
-
-    // Convert participants to u16 once — reused in modulo operations.
-    let participants_u16: u16 =
-        u16::try_from(participants).map_err(|error: TryFromIntError| {
-            Errors::InvalidMessage(error.to_string())
-        })?;
-
-    // Reduce the hash modulo participants to get a starting index in
-    // [0, participants).
-    let first_eight_bytes: [u8; 8] = digest
-        .iter()
-        .copied()
-        .take(8)
-        .collect::<Vec<u8>>()
-        .try_into()
-        .map_err(|bytes: Vec<u8>| {
-            Errors::InvalidMessage(format!(
-                "Failed to extract first 8 bytes from digest: got {} bytes.",
-                bytes.len()
-            ))
-        })?;
-
-    let start: u16 = u16::try_from(
-        u64::from_be_bytes(first_eight_bytes) % participants as u64,
-    )
-    .map_err(|error: TryFromIntError| {
-        Errors::InvalidMessage(format!(
-            "Failed to convert hash to start index: {}",
-            error
-        ))
-    })?;
-
-    // Select `threshold` consecutive participant indices starting from
-    // `start`, wrapping around modulo `participants`.
-    let mut parties: Vec<u16> = (0..threshold)
-        .map(|index: u32| (start + index as u16) % participants_u16)
-        .collect();
-
-    // Sort to ensure a canonical ordering — required by CGGMP24 signing.
-    parties.sort();
-
-    Ok(parties)
 }
 
 #[async_trait]

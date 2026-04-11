@@ -9,5 +9,6 @@ pub mod controller;
 pub mod node;
 pub mod pregenerated_primes;
 pub mod security_level;
+pub mod signer_set;
 pub mod stored_key;
 pub mod wire;

@@ -199,9 +199,19 @@ impl Cggmp24EcdsaSecp256k1NodeKeyGeneration {
             identifier_u32: init.identifier,
         };
 
+        let parties: Vec<u16> = (0..u16::try_from(init.common.participants)
+            .map_err(|error: TryFromIntError| {
+            Errors::InvalidProtocolInit(format!(
+                "Participants count exceeds u16 range: {}",
+                error
+            ))
+        })?)
+            .collect();
+
         Ok(Self(Cggmp24NodeProtocol::new(
             data,
             init.identifier,
+            parties,
             // Spawn the worker thread — it will drive the CGGMP24 state
             // machine to completion and signal via done_transmitter when
             // finished.

@@ -14,9 +14,12 @@ use crate::{
         signature_result::FinalSignature,
     },
     protocols::{
-        cggmp24::controller::protocol::{
-            Cggmp24ControllerProtocol,
-            CggmpControllerProtocol,
+        cggmp24::{
+            controller::protocol::{
+                Cggmp24ControllerProtocol,
+                CggmpControllerProtocol,
+            },
+            signer_set::compute_parties,
         },
         protocol::Protocol,
         types::{
@@ -53,6 +56,21 @@ impl CggmpControllerProtocol for SigningControllerDescriptor {
 
     fn participants(data: &Self::Data) -> u32 {
         data.participants
+    }
+
+    /// Compute the deterministic signer set for threshold signing.
+    ///
+    /// Only the nodes selected by `compute_parties` are contacted to start
+    /// a signing session — the rest are skipped entirely.
+    fn signer_indices(data: &Self::Data) -> Result<Vec<usize>, Errors> {
+        compute_parties(
+            &data.key_identifier,
+            data.threshold,
+            data.participants,
+        )
+        .map(|indices: Vec<u16>| {
+            indices.into_iter().map(|index: u16| index as usize).collect()
+        })
     }
 
     /// Start a signing session on a single node.
